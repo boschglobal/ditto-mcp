@@ -126,6 +126,45 @@ describe("parseOperations", () => {
     expect(postOp.bodySchema?.props).toContainEqual({ name: "attributes", type: "object", required: false });
   });
 
+  it("takes the body media type from the requestBody and derives the body schema from it", () => {
+    // Ditto's PATCH routes accept only merge-patch; there is no application/json entry.
+    const spec = {
+      paths: { "/things/{thingId}": { patch: { operationId: "patchThing",
+        requestBody: { content: { "application/merge-patch+json": { schema: { type: "object", properties: {
+          attributes: { type: "object" } } } } } } } } },
+    };
+    const [patch] = parseOperations(spec);
+    expect(patch.contentType).toBe("application/merge-patch+json");
+    expect(patch.bodySchema?.props).toEqual([{ name: "attributes", type: "object", required: false }]);
+  });
+
+  it("resolves a $ref'd requestBody from components.requestBodies", () => {
+    const spec = {
+      components: { requestBodies: { PatchValue: { content: { "application/merge-patch+json": {
+        schema: { type: "object", properties: { v: { type: "number" } } } } } } } },
+      paths: { "/things/{thingId}/attributes/{attributePath}": { patch: { operationId: "patchAttribute",
+        requestBody: { $ref: "#/components/requestBodies/PatchValue" } } } },
+    };
+    const [patch] = parseOperations(spec);
+    expect(patch.hasBody).toBe(true);
+    expect(patch.contentType).toBe("application/merge-patch+json");
+    expect(patch.bodySchema?.props).toEqual([{ name: "v", type: "number", required: false }]);
+  });
+
+  it("prefers application/json when an operation accepts several media types", () => {
+    const spec = {
+      paths: { "/messages": { post: { operationId: "sendMessage",
+        requestBody: { content: {
+          "text/plain": { schema: { type: "string" } },
+          "application/json": { schema: { type: "object", properties: { a: { type: "string" } } } },
+          "application/octet-stream": {},
+        } } } } },
+    };
+    const [send] = parseOperations(spec);
+    expect(send.contentType).toBe("application/json");
+    expect(send.bodySchema?.props).toEqual([{ name: "a", type: "string", required: false }]);
+  });
+
   it("marks a $ref or allOf/oneOf/anyOf body property as type 'unknown' (not string)", () => {
     const spec = {
       components: { schemas: {

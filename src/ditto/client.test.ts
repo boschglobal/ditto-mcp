@@ -50,7 +50,57 @@ describe("HttpDittoClient", () => {
       cred(),
     );
     expect(res.status).toBe(201);
+    expect(fake.requests[0].contentType).toBe("application/json");
     expect(JSON.parse(fake.requests[0].body!)).toEqual({ attributes: { a: 1 } });
+  });
+
+  it("sends the body as the media type the operation declares", async () => {
+    fake = await startFakeDitto(() => ({ status: 204, body: "" }));
+    const client = new HttpDittoClient(fake.baseUrl);
+    await client.execute(
+      op({ method: "PATCH", path: "/things/{id}", hasBody: true, contentType: "application/merge-patch+json",
+           params: [{ name: "id", in: "path", required: true, type: "string" }] }),
+      { id: "ns:1", body: { attributes: { a: null } } },
+      cred(),
+    );
+    expect(fake.requests[0].contentType).toBe("application/merge-patch+json");
+    expect(JSON.parse(fake.requests[0].body!)).toEqual({ attributes: { a: null } });
+  });
+
+  it("JSON-encodes a string value for a +json media type", async () => {
+    fake = await startFakeDitto(() => ({ status: 204, body: "" }));
+    const client = new HttpDittoClient(fake.baseUrl);
+    await client.execute(
+      op({ method: "PATCH", path: "/things/ns:1/attributes/color", hasBody: true,
+           contentType: "application/merge-patch+json" }),
+      { body: "red" },
+      cred(),
+    );
+    expect(fake.requests[0].body).toBe('"red"');
+  });
+
+  it("form-encodes the body of a form operation", async () => {
+    fake = await startFakeDitto(() => ({ status: 200, body: "{}" }));
+    const client = new HttpDittoClient(fake.baseUrl);
+    await client.execute(
+      op({ method: "POST", path: "/search/things", hasBody: true, contentType: "application/x-www-form-urlencoded" }),
+      { body: { filter: "eq(attributes/a,1)", fields: "thingId" } },
+      cred(),
+    );
+    expect(fake.requests[0].contentType).toBe("application/x-www-form-urlencoded");
+    expect(fake.requests[0].body).toBe("filter=eq%28attributes%2Fa%2C1%29&fields=thingId");
+  });
+
+  it("sends a text body as-is, without JSON quotes", async () => {
+    fake = await startFakeDitto(() => ({ status: 200, body: "" }));
+    const client = new HttpDittoClient(fake.baseUrl);
+    await client.execute(
+      op({ method: "POST", path: "/connections/c1/command", hasBody: true, contentType: "text/plain" }),
+      { body: "connectivity.commands:openConnection" },
+      cred(),
+    );
+    expect(fake.requests[0].contentType).toBe("text/plain");
+    expect(fake.requests[0].body).toBe("connectivity.commands:openConnection");
   });
 
   it("encodes unsafe path-param chars but keeps the Ditto namespace colon", async () => {

@@ -69,11 +69,21 @@ export class HttpDittoClient implements DittoClient {
     if (auth) headers["authorization"] = auth;
     let body: string | undefined;
     if (op.hasBody && args.body !== undefined) {
-      headers["content-type"] = "application/json";
-      body = JSON.stringify(args.body);
+      const contentType = op.contentType ?? "application/json";
+      headers["content-type"] = contentType;
+      body = encodeBody(args.body, contentType);
     }
 
     const res = await this.fetchFn(url, { method: op.method, headers, body, signal });
     return { status: res.status, body: await res.text() };
   }
+}
+
+function encodeBody(value: unknown, contentType: string): string {
+  if (contentType === "application/json" || contentType.endsWith("+json")) return JSON.stringify(value);
+  if (typeof value === "string") return value;
+  if (contentType === "application/x-www-form-urlencoded" && value !== null && typeof value === "object") {
+    return new URLSearchParams(Object.entries(value).map(([k, v]) => [k, String(v)])).toString();
+  }
+  return JSON.stringify(value);
 }

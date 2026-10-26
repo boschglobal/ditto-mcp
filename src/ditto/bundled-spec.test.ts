@@ -49,4 +49,19 @@ describe("bundled Ditto spec", () => {
     const propNames = putThing!.bodySchema!.props.map(p => p.name);
     expect(propNames).toContain("policyId");
   });
+
+  it("sends every PATCH as merge-patch, which is the only type Ditto's PATCH routes accept", () => {
+    const spec = YAML.parse(readFileSync(specPath, "utf8"));
+    const patches = parseOperations(spec).filter((o) => o.method === "PATCH");
+    expect(patches.length).toBeGreaterThan(0);
+    for (const op of patches) expect(op.contentType, op.path).toBe("application/merge-patch+json");
+    const patchThing = patches.find((o) => o.path === "/api/2/things/{thingId}");
+    expect(patchThing!.bodySchema!.props.map((p) => p.name)).toContain("attributes");
+  });
+
+  it("sends a search POST form-encoded", () => {
+    const spec = YAML.parse(readFileSync(specPath, "utf8"));
+    const search = parseOperations(spec).find((o) => o.method === "POST" && o.path === "/api/2/search/things");
+    expect(search!.contentType).toBe("application/x-www-form-urlencoded");
+  });
 });

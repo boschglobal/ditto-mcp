@@ -13,7 +13,7 @@
 
 import { createServer, type Server } from "node:http";
 
-export interface RecordedRequest { method: string; url: string; auth?: string; body?: string }
+export interface RecordedRequest { method: string; url: string; auth?: string; contentType?: string; body?: string }
 export interface FakeReply { status: number; body: string }
 
 export async function startFakeDitto(
@@ -28,6 +28,7 @@ export async function startFakeDitto(
         method: req.method ?? "GET",
         url: req.url ?? "/",
         auth: req.headers["authorization"] as string | undefined,
+        contentType: req.headers["content-type"],
         body: chunks.length ? Buffer.concat(chunks).toString("utf8") : undefined,
       };
       requests.push(rec);

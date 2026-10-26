@@ -36,6 +36,8 @@ export interface DittoOperation {
   description: string;
   params: OpParam[];
   hasBody: boolean;
+  /** Media type the body is sent as; one of the requestBody's declared content types. */
+  contentType?: string;
   bodySchema?: BodySchema;
   securitySchemes: string[];
 }
@@ -68,9 +70,17 @@ function resolveSchemaRef(s: SpecShape, schema: unknown): unknown {
   return schema;
 }
 
-function bodySchemaOf(s: SpecShape, op: { requestBody?: unknown }): BodySchema | undefined {
-  const schemaRef = (op.requestBody as { content?: Record<string, { schema?: unknown }> } | undefined)
-    ?.content?.["application/json"]?.schema;
+type BodyContent = Record<string, { schema?: unknown }>;
+
+// Ditto rejects a body sent with a media type the route does not accept (PATCH takes only
+// application/merge-patch+json, search POST only form-encoded), so send a declared one.
+function contentTypeOf(content: BodyContent | undefined): string | undefined {
+  const types = Object.keys(content ?? {});
+  return types.includes("application/json") ? "application/json" : types[0];
+}
+
+function bodySchemaOf(s: SpecShape, content: BodyContent | undefined, contentType: string | undefined): BodySchema | undefined {
+  const schemaRef = contentType ? content?.[contentType]?.schema : undefined;
   const schema = resolveSchemaRef(s, schemaRef) as
     | { type?: string; properties?: Record<string, unknown>; required?: string[] } | undefined;
   if (!schema || schema.type !== "object" || !schema.properties) return undefined;
@@ -92,9 +102,20 @@ function resolveParam(spec: SpecShape, p: RawParam): RawParam {
   return p;
 }
 
+/** Resolve a `{$ref: '#/components/requestBodies/Name'}` requestBody against the spec; pass others through. */
+function resolveRequestBody(spec: SpecShape, rb: unknown): { content?: BodyContent } | undefined {
+  const ref = (rb as { $ref?: string } | undefined)?.$ref;
+  if (ref) return spec.components?.requestBodies?.[ref.split("/").pop() ?? ""] as { content?: BodyContent } | undefined;
+  return rb as { content?: BodyContent } | undefined;
+}
+
 interface SpecShape {
   paths?: Record<string, Record<string, unknown>>;
-  components?: { parameters?: Record<string, unknown>; schemas?: Record<string, unknown> };
+  components?: {
+    parameters?: Record<string, unknown>;
+    schemas?: Record<string, unknown>;
+    requestBodies?: Record<string, unknown>;
+  };
   security?: Array<Record<string, unknown>>;
 }
 
@@ -127,6 +148,8 @@ export function parseOperations(spec: unknown): DittoOperation[] {
         new Set(effectiveSecurity.flatMap((req) => Object.keys(req)))
       );
       const hasBody = op.requestBody !== undefined;
+      const content = resolveRequestBody(s, op.requestBody)?.content;
+      const contentType = hasBody ? contentTypeOf(content) : undefined;
       ops.push({
         operationId: op.operationId ?? `${method.toUpperCase()}_${path}`,
         method: method.toUpperCase(),
@@ -135,7 +158,8 @@ export function parseOperations(spec: unknown): DittoOperation[] {
         description: op.description ?? op.summary ?? "",
         params,
         hasBody,
-        bodySchema: hasBody ? bodySchemaOf(s, op) : undefined,
+        contentType,
+        bodySchema: hasBody ? bodySchemaOf(s, content, contentType) : undefined,
         securitySchemes,
       });
     }
