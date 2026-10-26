@@ -450,7 +450,7 @@ Example (separate OIDC identities):
 
 **Migration from earlier configs:** the `devops` credential kind and the `devops: true` flag are removed. Move a devops credential into `ditto.devopsCredential` (use `kind: "basic"` for a devops username/password).
 
-**Authorization enforcement:** The MCP never decides authorization. It forwards the credential (or `Authorization` header) and lets Ditto enforce access control. Credentials are never logged.
+**Authorization enforcement:** Ditto enforces access control for the server's own identity: `ditto.credential`, or `ditto.devopsCredential` for sudo operations. A caller's credentials or `Authorization` header are never forwarded, so every MCP client acts with that identity's Ditto permissions; scope it accordingly. The policy below can only narrow which operations are exposed. Credentials are never logged.
 
 #### Policy
 
