@@ -142,9 +142,28 @@ describe("streamable HTTP app (e2e)", () => {
         params: { name: "ping", arguments: {} },
       }),
     });
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(404);
     const body = await response.json();
-    expect(body.error.message).toBe("Bad Request: no valid session");
+    expect(body.error.message).toBe("Session not found");
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("answers an unknown session id with 404, the client's signal to re-initialize", async () => {
+    // After a restart the client still holds its old session id; 400 would leave it stuck.
+    const { server, url } = await listen();
+    const headers = { ...MCP_HEADERS, "mcp-session-id": "6d0f3a52-0000-4000-8000-000000000000" };
+    const ping = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
+    expect((await fetch(url, { method: "POST", headers, body: ping })).status).toBe(404);
+    expect((await fetch(url, { method: "GET", headers })).status).toBe(404);
+    expect((await fetch(url, { method: "DELETE", headers })).status).toBe(404);
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("answers a non-initialize request without a session id with 400", async () => {
+    const { server, url } = await listen();
+    const ping = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
+    expect((await fetch(url, { method: "POST", headers: MCP_HEADERS, body: ping })).status).toBe(400);
+    expect((await fetch(url, { method: "GET", headers: MCP_HEADERS })).status).toBe(400);
     await new Promise<void>((r) => server.close(() => r()));
   });
 
