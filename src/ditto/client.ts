@@ -29,10 +29,16 @@ export interface DittoClient {
 }
 
 export class HttpDittoClient implements DittoClient {
+  private readonly baseUrl: string;
+
   constructor(
-    private readonly baseUrl: string,
+    baseUrl: string,
     private readonly fetchFn: typeof fetch = fetch,
-  ) {}
+  ) {
+    // Operation paths start with "/". Strip rather than use new URL(path, base), which would
+    // drop a reverse-proxy prefix such as "https://gw/ditto".
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+  }
 
   async execute(
     op: DittoOperation,

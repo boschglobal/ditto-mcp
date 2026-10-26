@@ -40,6 +40,14 @@ describe("HttpDittoClient", () => {
     expect(fake.requests[0].auth).toBe("Basic abc");
   });
 
+  it("tolerates a trailing slash in baseUrl and keeps its path prefix", async () => {
+    // "//api/2/..." matches no Ditto route; a reverse-proxy prefix like "/ditto" must survive.
+    fake = await startFakeDitto(() => ({ status: 200, body: "{}" }));
+    await new HttpDittoClient(`${fake.baseUrl}/`).execute(op({ path: "/api/2/things" }), {}, cred());
+    await new HttpDittoClient(`${fake.baseUrl}/ditto/`).execute(op({ path: "/api/2/things" }), {}, cred());
+    expect(fake.requests.map((r) => r.url)).toEqual(["/api/2/things", "/ditto/api/2/things"]);
+  });
+
   it("sends a JSON body for write ops", async () => {
     fake = await startFakeDitto(() => ({ status: 201, body: "" }));
     const client = new HttpDittoClient(fake.baseUrl);
