@@ -58,7 +58,7 @@ export class PublicSource implements KnowledgeSource {
     } catch (err) {
       throw new Error(`cannot fetch ${this.opts.url}: ${errorReason(err)}`);
     }
-    let entries = parseEntries(index, this.opts.url);
+    let entries = parseEntries(index, this.opts.url, onSkip);
     if (this.opts.maxDocs !== undefined) {
       entries = entries.slice(0, this.opts.maxDocs);
     }
@@ -93,14 +93,22 @@ export class PublicSource implements KnowledgeSource {
   }
 }
 
-function parseEntries(index: string, baseUrl: string): Entry[] {
+function parseEntries(index: string, baseUrl: string, onSkip?: SkipFn): Entry[] {
   const re = /- \[([^\]]+)\]\(([^)]+)\)/g;
   const entries: Entry[] = [];
   const seen = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(index)) !== null) {
     const title = m[1].trim();
-    const resolved = new URL(m[2].trim(), baseUrl);
+    const link = m[2].trim();
+    let resolved: URL;
+    try {
+      resolved = new URL(link, baseUrl);
+    } catch (err) {
+      // One bad link must not cost the whole index.
+      onSkip?.(link, errorReason(err));
+      continue;
+    }
     // Guard against SSRF: only allow http/https schemes
     if (resolved.protocol !== "http:" && resolved.protocol !== "https:") {
       continue;

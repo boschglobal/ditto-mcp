@@ -94,6 +94,22 @@ describe("PublicSource", () => {
     expect(chunks.some((c) => c.cite.endsWith("policies.md"))).toBe(false);
   });
 
+  it("reports a malformed link in the index and loads the rest", async () => {
+    const skipped: Array<[string, string]> = [];
+    const index = `# Ditto docs
+- [Broken](http://[bad/broken.md): unparseable host
+- [Things](https://eclipse.dev/ditto/things.md): about things`;
+    const src = new PublicSource({
+      url: "https://eclipse.dev/ditto/llms.txt",
+      fetchFn: async (u) => (u.endsWith("llms.txt") ? index : fakeFetch(u)),
+    });
+    const chunks = await src.loadChunks(undefined, (item, reason) => {
+      skipped.push([item, reason]);
+    });
+    expect(skipped).toEqual([["http://[bad/broken.md", "Invalid URL"]]);
+    expect(new Set(chunks.map((c) => c.cite))).toEqual(new Set(["https://eclipse.dev/ditto/things.md"]));
+  });
+
   it("reports the network error behind a failed document fetch", async () => {
     const skipped: Array<[string, string]> = [];
     const src = new PublicSource({
