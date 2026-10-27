@@ -249,6 +249,8 @@ See `examples/` for reference configs. All examples are parse-tested in CI and w
 | `server.http.enableDnsRebindingProtection` | `boolean` | `true` | Enable DNS rebinding protection (rejects requests with invalid Host/Origin headers) |
 | `server.http.allowedHosts` | `string[]?` | `undefined` | Allowed Host header values (e.g., `["mcp.example.com:3000"]`). When undefined and protection is enabled, a loopback allowlist is derived: `["127.0.0.1:port", "localhost:port", "[::1]:port", "host:port"]` |
 | `server.http.allowedOrigins` | `string[]?` | `undefined` | Allowed Origin header values (optional) |
+| `server.http.sessionIdleTimeoutMs` | `number` | `1800000` (30 min) | Close an MCP session with no request in flight for this long. A client holding its event stream open is never idle. Its next request gets 404, and spec-compliant clients then re-initialize |
+| `server.http.maxSessions` | `number` | `100` | Session cap. At the cap, a new session closes the least recently active idle one, or else a busy one inactive for longer than `sessionIdleTimeoutMs` (a stream to a vanished client may never close). A recently active session is never closed for a newcomer; if no session qualifies, the new `initialize` gets 503 |
 | `server.http.auth.mode` | `"none" \| "bearer"` | `"none"` | Authentication for the `/mcp` endpoint. `none` is rejected at startup on a non-loopback `host` |
 | `server.http.auth.token` | `string?` | `undefined` | Shared bearer token (prefer `tokenFile`; inline secrets land in config files) |
 | `server.http.auth.tokenFile` | `string?` | `undefined` | Path to a file holding the bearer token; trailing whitespace is trimmed |

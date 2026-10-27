@@ -19,6 +19,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig, HttpAuthConfig } from "../config/schema.js";
 import type { ToolRegistry } from "../registry/tool-registry.js";
 import { buildServer } from "./build-server.js";
+import { SessionTable, type Session } from "./session-table.js";
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
@@ -105,7 +106,18 @@ export function createHttpApp(
 
   app.use(express.json());
 
-  const transports = new Map<string, StreamableHTTPServerTransport>();
+  const { sessionIdleTimeoutMs, maxSessions } = config.server.http;
+  const sessions = new SessionTable<StreamableHTTPServerTransport>(maxSessions, sessionIdleTimeoutMs);
+
+  // Count a request against its session; the session is idle again once the response closes.
+  const track = (session: Session<StreamableHTTPServerTransport>, res: Response): void => {
+    sessions.begin(session);
+    res.on("close", () => sessions.end(session));
+  };
+
+  // Clients that crash or never send DELETE would otherwise keep their session, and its
+  // McpServer, forever.
+  setInterval(() => sessions.sweep(), Math.min(sessionIdleTimeoutMs, 60_000)).unref();
 
   // The MCP spec reserves 404 for a session id we don't know (expired, or issued before a
   // restart): it tells the client to start over with a fresh initialize. 400 would not.
@@ -120,9 +132,10 @@ export function createHttpApp(
   app.post("/mcp", async (req: Request, res: Response) => {
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
-      let transport: StreamableHTTPServerTransport | undefined =
-        sessionId ? transports.get(sessionId) : undefined;
+      const session = sessionId ? sessions.get(sessionId) : undefined;
+      let transport = session?.transport;
 
+      if (session) track(session, res);
       if (!transport) {
         if (sessionId) {
           sessionNotFound(res);
@@ -136,6 +149,16 @@ export function createHttpApp(
           });
           return;
         }
+        const reservation = sessions.reserve();
+        if (!reservation) {
+          res.status(503).json({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Too many sessions" },
+            id: null,
+          });
+          return;
+        }
+        res.on("close", () => sessions.release(reservation));
         const http = config.server.http;
         const allowedHosts = http.allowedHosts ?? [
           `${http.host}:${http.port}`,
@@ -145,8 +168,9 @@ export function createHttpApp(
         ];
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          // Runs only once the transport has accepted the initialize (Host/Origin checks passed).
           onsessioninitialized: (sid) => {
-            transports.set(sid, transport as StreamableHTTPServerTransport);
+            track(sessions.add(sid, transport as StreamableHTTPServerTransport, reservation), res);
           },
           enableDnsRebindingProtection: http.enableDnsRebindingProtection,
           allowedHosts: http.enableDnsRebindingProtection
@@ -155,7 +179,7 @@ export function createHttpApp(
           allowedOrigins: http.allowedOrigins,
         });
         transport.onclose = () => {
-          if (transport?.sessionId) transports.delete(transport.sessionId);
+          if (transport?.sessionId) sessions.remove(transport.sessionId);
         };
         const server = buildServer(registry, config);
         await server.connect(transport);
@@ -183,12 +207,13 @@ export function createHttpApp(
         res.status(400).send("Missing session ID");
         return;
       }
-      const transport = transports.get(sessionId);
-      if (!transport) {
+      const session = sessions.get(sessionId);
+      if (!session) {
         sessionNotFound(res);
         return;
       }
-      await transport.handleRequest(req, res);
+      track(session, res);
+      await session.transport.handleRequest(req, res);
     } catch (error) {
       process.stderr.write(
         `[ditto-mcp] ${req.method} /mcp error: ${error instanceof Error ? error.message : String(error)}\n`,

@@ -222,6 +222,125 @@ describe("streamable HTTP app (e2e)", () => {
   });
 });
 
+/** Open a session with a bare initialize (no client event stream) and return its id. */
+async function initSession(url: string): Promise<string> {
+  const res = await fetch(url, { method: "POST", headers: MCP_HEADERS, body: INITIALIZE });
+  await res.text();
+  return res.headers.get("mcp-session-id")!;
+}
+
+async function pingStatus(url: string, sessionId: string): Promise<number> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...MCP_HEADERS, "mcp-session-id": sessionId },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }),
+  });
+  await res.text();
+  return res.status;
+}
+
+async function connectClient(url: string): Promise<{ client: Client; sessionId: string }> {
+  const client = new Client({ name: "http-test", version: "0.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(url));
+  await client.connect(transport);
+  return { client, sessionId: transport.sessionId! };
+}
+
+/** POST with an explicit Host header, which fetch cannot set. */
+function postWithHost(
+  url: string, host: string, body: string, sessionId?: string,
+): Promise<{ status: number; sessionId?: string }> {
+  const { port } = new URL(url);
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        hostname: "127.0.0.1", port, path: "/mcp", method: "POST",
+        headers: {
+          ...MCP_HEADERS, host, "Content-Length": Buffer.byteLength(body),
+          ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+        },
+      },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve({
+          status: res.statusCode ?? 0, sessionId: res.headers["mcp-session-id"] as string | undefined,
+        }));
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("session lifetime", () => {
+  it("closes a session idle longer than sessionIdleTimeoutMs", async () => {
+    // Clients that crash or never send DELETE would otherwise hold their session forever.
+    const { server, url } = await listen({ sessionIdleTimeoutMs: 50 });
+    const sid = await initSession(url);
+    expect(await pingStatus(url, sid)).toBe(200);
+    await sleep(250);
+    expect(await pingStatus(url, sid)).toBe(404);
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("keeps an idle-timed session alive while its client holds an event stream open", async () => {
+    const { server, url } = await listen({ sessionIdleTimeoutMs: 50 });
+    const { client } = await connectClient(url);
+    await sleep(250);
+    const res = await client.callTool({ name: "ping", arguments: {} });
+    expect((res.content as Array<{ text: string }>)[0].text).toBe("pong");
+    await client.close();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("at maxSessions, closes the least recently active idle session to admit a new one", async () => {
+    const { server, url } = await listen({ maxSessions: 2 });
+    const a = await initSession(url);
+    const b = await initSession(url);
+    expect(await pingStatus(url, a)).toBe(200); // b is now the least recently active
+    const c = await initSession(url);
+    expect(await pingStatus(url, b)).toBe(404);
+    expect(await pingStatus(url, a)).toBe(200);
+    expect(await pingStatus(url, c)).toBe(200);
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("at maxSessions, closes a busy session inactive longer than the idle timeout", async () => {
+    // A stream to a vanished client may never close; it must not hold its slot forever.
+    const { server, url } = await listen({ maxSessions: 1, sessionIdleTimeoutMs: 50 });
+    const { client, sessionId: busy } = await connectClient(url); // holds its event stream open
+    await sleep(150);
+    const fresh = await initSession(url);
+    expect(await pingStatus(url, busy)).toBe(404);
+    expect(await pingStatus(url, fresh)).toBe(200);
+    await client.close();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("at maxSessions, refuses a new initialize with 503 rather than close a recently active session", async () => {
+    const { server, url } = await listen({ maxSessions: 1 });
+    const { client } = await connectClient(url); // busy: holds its event stream open
+    const res = await fetch(url, { method: "POST", headers: MCP_HEADERS, body: INITIALIZE });
+    expect(res.status).toBe(503);
+    const pong = await client.callTool({ name: "ping", arguments: {} });
+    expect((pong.content as Array<{ text: string }>)[0].text).toBe("pong");
+    await client.close();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("does not evict a session for an initialize that DNS-rebinding protection rejects", async () => {
+    // The derived allowlist holds the configured port (3000), whatever port we really bound.
+    const { server, url } = await listen({ enableDnsRebindingProtection: true, maxSessions: 1 });
+    const ping = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
+    const { sessionId } = await postWithHost(url, "127.0.0.1:3000", INITIALIZE);
+    expect((await postWithHost(url, "attacker.example", INITIALIZE)).status).toBe(403);
+    expect((await postWithHost(url, "127.0.0.1:3000", ping, sessionId)).status).toBe(200);
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+});
+
 describe("tool set lifetime", () => {
   it("builds the tools once, so every session shares one OIDC token", async () => {
     // Per-session tools meant a new credential, and a new IdP token request, per session.
