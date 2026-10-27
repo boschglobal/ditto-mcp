@@ -23,6 +23,14 @@ export interface IngestLock {
   release(): Promise<void>;
 }
 
+const INSERT_BATCH = 500;
+
+// ON CONFLICT DO UPDATE refuses to touch a row twice in one statement; keep the last of a
+// repeated id, as one upsert per row did.
+function lastById<T extends { id: string }>(items: T[]): T[] {
+  return [...new Map(items.map((it) => [it.id, it])).values()];
+}
+
 export class PgKnowledgeStore implements KnowledgeStore {
   private constructor(
     private readonly pool: pg.Pool,
@@ -132,15 +140,23 @@ export class PgKnowledgeStore implements KnowledgeStore {
   }
 
   async addChunks(chunks: Chunk[]): Promise<void> {
+    await this.insertBatches(lastById(chunks), (client, batch) => client.query(
+      `INSERT INTO ${this.t}_chunks (id, source, title, text, cite)
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
+       ON CONFLICT (id) DO UPDATE
+         SET source = EXCLUDED.source, title = EXCLUDED.title, text = EXCLUDED.text, cite = EXCLUDED.cite`,
+      [batch.map((c) => c.id), batch.map((c) => c.source), batch.map((c) => c.title),
+        batch.map((c) => c.text), batch.map((c) => c.cite)],
+    ));
+  }
+
+  /** Multi-row inserts in one transaction: one round trip per batch instead of per row. */
+  private async insertBatches<T>(items: T[], insert: (client: pg.PoolClient, batch: T[]) => Promise<unknown>): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      for (const c of chunks) {
-        await client.query(
-          `INSERT INTO ${this.t}_chunks (id, source, title, text, cite) VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (id) DO UPDATE SET source=$2, title=$3, text=$4, cite=$5`,
-          [c.id, c.source, c.title, c.text, c.cite],
-        );
+      for (let i = 0; i < items.length; i += INSERT_BATCH) {
+        await insert(client, items.slice(i, i + INSERT_BATCH));
       }
       await client.query("COMMIT");
     } catch (e) {
@@ -176,34 +192,21 @@ export class PgKnowledgeStore implements KnowledgeStore {
   async ensureVectorTable(dim: number): Promise<void> {
     if (this.vecReady) return;
     if (!Number.isInteger(dim) || dim <= 0) throw new Error(`vector dim must be positive (got ${dim})`);
+    // The HNSW index is built by swapIntoLive, once all vectors are in.
     await this.pool.query(
       `CREATE TABLE IF NOT EXISTS ${this.t}_vec (id TEXT PRIMARY KEY, embedding vector(${dim}))`,
-    );
-    await this.pool.query(
-      `CREATE INDEX IF NOT EXISTS ${this.t}_vec_idx ON ${this.t}_vec USING hnsw (embedding vector_cosine_ops)`,
     );
     this.vecReady = true;
   }
 
   async upsertVectors(items: { id: string; vector: number[] }[]): Promise<void> {
     if (!this.vecReady) throw new Error("call ensureVectorTable(dim) before upsertVectors");
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      for (const it of items) {
-        await client.query(
-          `INSERT INTO ${this.t}_vec (id, embedding) VALUES ($1, $2)
-           ON CONFLICT (id) DO UPDATE SET embedding = $2`,
-          [it.id, JSON.stringify(it.vector)],
-        );
-      }
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw e;
-    } finally {
-      client.release();
-    }
+    await this.insertBatches(lastById(items), (client, batch) => client.query(
+      `INSERT INTO ${this.t}_vec (id, embedding)
+       SELECT id, embedding::vector FROM unnest($1::text[], $2::text[]) AS u(id, embedding)
+       ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding`,
+      [batch.map((it) => it.id), batch.map((it) => JSON.stringify(it.vector))],
+    ));
   }
 
   async vectorSearch(vector: number[], k: number): Promise<{ id: string; distance: number }[]> {
@@ -264,6 +267,14 @@ export class PgKnowledgeStore implements KnowledgeStore {
   async swapIntoLive(): Promise<void> {
     if (!this.isStaging) {
       throw new Error("swapIntoLive can only be called on a staging store");
+    }
+    // Build the vector index now that all vectors are in, and before the swap transaction:
+    // it locks the live tables, which the server keeps reading until the swap.
+    const vec = await this.pool.query("SELECT to_regclass($1) AS reg", [`${this.t}_vec`]);
+    if (vec.rows[0].reg !== null) {
+      await this.pool.query(
+        `CREATE INDEX IF NOT EXISTS ${this.t}_vec_idx ON ${this.t}_vec USING hnsw (embedding vector_cosine_ops)`,
+      );
     }
     const client = await this.pool.connect();
     try {

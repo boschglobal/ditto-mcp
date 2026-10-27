@@ -215,6 +215,29 @@ describe("PgKnowledgeStore", () => {
     await liveStore.close();
   });
 
+  it("builds the vector index at the swap, not while vectors load", async () => {
+    // Every row inserted into a live HNSW index updates it; building it once at the end is cheaper.
+    const live = `ix_${Math.floor(performance.now())}`;
+    const staging = await PgKnowledgeStore.connect(db.connectionString, live, { staging: true });
+    await staging.ensureVectorTable(3);
+    await staging.addChunks([chunk("x", "netty")]);
+    await staging.upsertVectors([{ id: "x", vector: [1, 0, 0] }]);
+    expect(await indexes(`${live}_staging_vec`)).toEqual([`${live}_staging_vec_pkey`]);
+    await staging.swapIntoLive();
+    await staging.close();
+    expect(await indexes(`${live}_vec`)).toEqual([`${live}_vec_idx`, `${live}_vec_pkey`]);
+  });
+
+  it("keeps the last of a repeated id within one batch of chunks or vectors", async () => {
+    const s = await fresh();
+    await s.ensureVectorTable(3);
+    await s.addChunks([chunk("a", "first"), chunk("b", "other"), chunk("a", "second")]);
+    await s.upsertVectors([{ id: "a", vector: [1, 0, 0] }, { id: "a", vector: [0, 1, 0] }]);
+    expect((await s.getChunk("a"))?.text).toBe("second");
+    expect((await s.vectorSearch([0, 1, 0], 1))[0]).toEqual({ id: "a", distance: 0 });
+    await s.close();
+  });
+
   it("dropTables removes the store's tables", async () => {
     const live = `sw_${Math.floor(performance.now())}`;
     const staging = await PgKnowledgeStore.connect(db.connectionString, live, { staging: true });
@@ -243,7 +266,7 @@ describe("PgKnowledgeStore", () => {
     const live = `ro_${n}`;
     const staging = await PgKnowledgeStore.connect(db.connectionString, live, { staging: true });
     await staging.addChunks([chunk("x", "netty out of memory")]);
-    await staging.setMeta({ embeddingModel: "m", dim: 3, chunkMaxChars: 1, chunkOverlap: 0, sources: [] } as never);
+    await staging.setMeta({ schemaVersion: 1, retriever: "fts", complete: true });
     await staging.swapIntoLive();
     await staging.close();
     await q(`CREATE ROLE reader_${n} LOGIN PASSWORD 'r'`);
