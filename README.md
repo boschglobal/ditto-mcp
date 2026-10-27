@@ -379,7 +379,7 @@ Two operational caveats:
 
 ### Ditto Action Tools
 
-The server can expose action tools dynamically generated from a Ditto OpenAPI spec. Each tool makes HTTP calls to a Ditto instance. Credentials are passed through to Ditto (the MCP never decides authorization beyond policy gating). The default policy is **read-only** (`GET` only).
+The server can expose action tools dynamically generated from a Ditto OpenAPI spec. Each tool makes HTTP calls to a Ditto instance with the server's own configured credentials, never the caller's (see [Credentials](#credentials)); Ditto authorizes that identity, and the policy below decides which operations are exposed at all. The default policy is **read-only** (`GET` only).
 
 #### Ditto Config
 
