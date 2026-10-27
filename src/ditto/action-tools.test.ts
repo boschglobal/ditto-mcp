@@ -131,6 +131,14 @@ describe("makeActionTools", () => {
     expect(x).not.toBe(y);
   });
 
+  it("picks a de-duplication suffix that no other tool already uses", async () => {
+    // "/a/{p}/b" and "/a/b" share a name; "/a/b/2" already owns the "_2" the second would get.
+    const spec = { paths: { "/a/{p}/b": { get: {} }, "/a/b": { get: {} }, "/a/b/2": { get: {} } } };
+    const config = AppConfigSchema.parse({ ditto: { enabled: true, baseUrl: "http://ditto" } });
+    const names = (await makeActionTools(config, { loadSpec: async () => spec })).map((t) => t.name);
+    expect(names).toEqual(["ditto_GET_a_b", "ditto_GET_a_b_2", "ditto_GET_a_b_2_2"]);
+  });
+
   it("keeps a de-duplicated name within 64 chars", async () => {
     // Both sanitize to the same 58 chars, so the base name is exactly 64 long.
     const spec = { paths: {

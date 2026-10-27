@@ -96,16 +96,17 @@ export async function makeActionTools(config: AppConfig, deps: ActionToolDeps = 
   const tools = parseOperations(spec)
     .filter((op) => isAllowed(op, config.ditto.policy))
     .map((op) => operationToTool(op, client, creds));
-  // De-duplicate tool names: on collision, append _2, _3, ... within the length limit.
-  const seen = new Map<string, number>();
+  // De-duplicate tool names: on collision, append the first free _2, _3, ... within the length
+  // limit. "Free" includes names other tools already hold, or ToolRegistry would throw.
+  const taken = new Set<string>();
   for (const tool of tools) {
-    const base = tool.name;
-    const count = seen.get(base) ?? 0;
-    seen.set(base, count + 1);
-    if (count > 0) {
-      const suffix = `_${count + 1}`;
-      tool.name = `${base.slice(0, MAX_TOOL_NAME - suffix.length)}${suffix}`;
+    let name = tool.name;
+    for (let n = 2; taken.has(name); n++) {
+      const suffix = `_${n}`;
+      name = `${tool.name.slice(0, MAX_TOOL_NAME - suffix.length)}${suffix}`;
     }
+    tool.name = name;
+    taken.add(name);
   }
   return tools;
 }
