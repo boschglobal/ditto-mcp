@@ -36,10 +36,12 @@ const HttpAuthSchema = z
     token: z.string().optional(),
     tokenFile: z.string().optional(),
   })
-  .default({ mode: "none" });
+  .default({});
 
 export type HttpAuthConfig = z.infer<typeof HttpAuthSchema>;
 
+// Sections default to {}: zod 3 parses a default through the object schema, so each field's own
+// default fills it in. zod 4's .default() skips that parse; there it would have to be .prefault({}).
 export const AppConfigSchema = z
   .object({
     server: z
@@ -56,20 +58,12 @@ export const AppConfigSchema = z
             maxSessions: z.number().int().positive().default(100),
             auth: HttpAuthSchema,
           })
-          .default({
-            port: 3000,
-            host: "127.0.0.1",
-            enableDnsRebindingProtection: true,
-            auth: { mode: "none" },
-          }),
+          .default({}),
       })
-      .default({
-        name: "ditto-mcp",
-        http: { port: 3000, host: "127.0.0.1", enableDnsRebindingProtection: true },
-      }),
+      .default({}),
     tools: z
       .object({ ping: z.boolean().default(true) })
-      .default({ ping: true }),
+      .default({}),
     knowledge: z
       .object({
         enabled: z.boolean().default(true),
@@ -83,7 +77,7 @@ export const AppConfigSchema = z
             cacheDir: z.string().optional(),
             batchSize: z.number().int().positive().default(32),
           })
-          .default({ model: "Xenova/bge-small-en-v1.5", dim: 384, allowRemoteModels: true, batchSize: 32 }),
+          .default({}),
         chunk: z
           .object({
             maxChars: z.number().int().positive().default(1000),
@@ -92,20 +86,20 @@ export const AppConfigSchema = z
           .refine((c) => c.overlap < c.maxChars, {
             message: "knowledge.chunk.overlap must be less than maxChars",
           })
-          .default({ maxChars: 1000, overlap: 150 }),
+          .default({}),
         search: z
           .object({
             limit: z.number().int().positive().max(20).default(5),
             context: z.number().int().min(0).max(5).default(1),
           })
-          .default({ limit: 5, context: 1 }),
+          .default({}),
         localDir: z
           .object({
             enabled: z.boolean().default(false),
             paths: z.array(z.string()).optional(),
             id: z.string().default("local"),
           })
-          .default({ enabled: false, id: "local" }),
+          .default({}),
         publicSource: z
           .object({
             enabled: z.boolean().default(true),
@@ -114,7 +108,7 @@ export const AppConfigSchema = z
               .default("https://eclipse.dev/ditto/llms.txt"),
             maxDocs: z.number().int().positive().optional(),
           })
-          .default({ enabled: true, url: "https://eclipse.dev/ditto/llms.txt" }),
+          .default({}),
         store: z
           .object({
             kind: z.enum(["sqlite", "pgvector"]).default("sqlite"),
@@ -126,20 +120,11 @@ export const AppConfigSchema = z
                 connectionString: z.string().optional(),
                 table: z.string().default("ditto_kn"),
               })
-              .default({ table: "ditto_kn" }),
+              .default({}),
           })
-          .default({ kind: "sqlite", sqlite: {}, pgvector: { table: "ditto_kn" } }),
+          .default({}),
       })
-      .default({
-        enabled: true,
-        retriever: "fts",
-        embedding: { model: "Xenova/bge-small-en-v1.5", dim: 384, allowRemoteModels: true, batchSize: 32 },
-        chunk: { maxChars: 1000, overlap: 150 },
-        search: { limit: 5, context: 1 },
-        localDir: { enabled: false, id: "local" },
-        publicSource: { enabled: true, url: "https://eclipse.dev/ditto/llms.txt" },
-        store: { kind: "sqlite", sqlite: {}, pgvector: { table: "ditto_kn" } },
-      }),
+      .default({}),
     ditto: z
       .object({
         enabled: z.boolean().default(false),
@@ -156,7 +141,7 @@ export const AppConfigSchema = z
               ),
           })
           .default({}),
-        credential: CredentialSchema.default({ kind: "basic" }),
+        credential: CredentialSchema.default({}),
         devopsCredential: CredentialSchema.optional(),
         policy: z
           .object({
@@ -164,14 +149,9 @@ export const AppConfigSchema = z
             writeAllowlist: z.array(z.string()).default([]),
             sudoAllowlist: z.array(z.string()).default([]),
           })
-          .default({ allowMethods: ["GET"], writeAllowlist: [], sudoAllowlist: [] }),
+          .default({}),
       })
-      .default({
-        enabled: false,
-        openApi: {},
-        credential: { kind: "basic" },
-        policy: { allowMethods: ["GET"], writeAllowlist: [], sudoAllowlist: [] },
-      }),
+      .default({}),
   })
   .default({});
 

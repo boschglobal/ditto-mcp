@@ -40,6 +40,34 @@ describe("loadConfig", () => {
     expect(cfg.ditto.policy.allowMethods).toEqual(["GET"]);
   });
 
+  it("fills nested defaults inside a partially given section", () => {
+    // Each object section's own field defaults must apply, whether the section is absent or partial.
+    const dir = mkdtempSync(join(tmpdir(), "ditto-mcp-"));
+    const file = join(dir, "c.json");
+    writeFileSync(file, JSON.stringify({
+      server: { http: { port: 8080 } },
+      knowledge: { store: { kind: "pgvector" } },
+      ditto: { enabled: true, policy: { writeAllowlist: ["PUT /x"] } },
+    }));
+    const cfg = loadConfig(file);
+    expect(cfg.server.name).toBe("ditto-mcp");
+    expect(cfg.server.http).toMatchObject({
+      port: 8080, host: "127.0.0.1", enableDnsRebindingProtection: true,
+      sessionIdleTimeoutMs: 1_800_000, maxSessions: 100, auth: { mode: "none" },
+    });
+    expect(cfg.knowledge.store).toEqual({ kind: "pgvector", sqlite: {}, pgvector: { table: "ditto_kn" } });
+    expect(cfg.knowledge.embedding).toEqual({
+      model: "Xenova/bge-small-en-v1.5", dim: 384, allowRemoteModels: true, batchSize: 32,
+    });
+    expect(cfg.knowledge.chunk).toEqual({ maxChars: 1000, overlap: 150 });
+    expect(cfg.knowledge.search).toEqual({ limit: 5, context: 1 });
+    expect(cfg.knowledge.localDir).toEqual({ enabled: false, id: "local" });
+    expect(cfg.knowledge.publicSource).toEqual({ enabled: true, url: "https://eclipse.dev/ditto/llms.txt" });
+    expect(cfg.ditto.credential).toEqual({ kind: "basic" });
+    expect(cfg.ditto.policy).toEqual({ allowMethods: ["GET"], writeAllowlist: ["PUT /x"], sudoAllowlist: [] });
+    expect(cfg.tools).toEqual({ ping: true });
+  });
+
   it("accepts a pgvector store config", () => {
     const dir = mkdtempSync(join(tmpdir(), "ditto-mcp-"));
     const file = join(dir, "c.json");
