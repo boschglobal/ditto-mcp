@@ -14,7 +14,7 @@
 import { createHash } from "node:crypto";
 import { z, type ZodRawShape } from "zod";
 import { textResult, type ToolDef, type ToolResult, type RequestCtx } from "../core/types.js";
-import { MERGE_PATCH, type DittoOperation } from "./openapi.js";
+import { MERGE_PATCH, mediaType, type DittoOperation } from "./openapi.js";
 import type { DittoClient } from "./client.js";
 import type { DittoCredential } from "./credential.js";
 import { isSudo } from "./tool-policy.js";
@@ -59,7 +59,7 @@ function inputSchema(op: DittoOperation): ZodRawShape {
   if (op.bodySchema?.props.length) {
     const bodyShape: ZodRawShape = {};
     // In a merge patch, null deletes the field.
-    const nullable = op.contentType === MERGE_PATCH;
+    const nullable = op.contentType !== undefined && mediaType(op.contentType) === MERGE_PATCH;
     for (const bp of op.bodySchema.props) {
       const base = bp.type === "number" ? z.number()
         : bp.type === "boolean" ? z.boolean()

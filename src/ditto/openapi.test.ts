@@ -138,6 +138,22 @@ describe("parseOperations", () => {
     expect(patch.bodySchema?.props).toEqual([{ name: "attributes", type: "object", required: false }]);
   });
 
+  it("recognizes application/json with parameters and never sends a wildcard type", () => {
+    const obj = { type: "object", properties: { a: { type: "string" } } };
+    const spec = { paths: {
+      "/x": { post: { operationId: "withParams", requestBody: { content: {
+        "*/*": { schema: { type: "object", properties: { other: { type: "string" } } } },
+        "application/json; charset=utf-8": { schema: obj },
+      } } } },
+      "/y": { post: { operationId: "wildcardOnly", requestBody: { content: { "*/*": { schema: obj } } } } },
+    } };
+    const [withParams, wildcardOnly] = parseOperations(spec);
+    expect(withParams.contentType).toBe("application/json; charset=utf-8");
+    expect(withParams.bodySchema?.props).toEqual([{ name: "a", type: "string", required: false }]);
+    expect(wildcardOnly.contentType).toBe("application/json");
+    expect(wildcardOnly.bodySchema?.props).toEqual([{ name: "a", type: "string", required: false }]);
+  });
+
   it("marks no field of a merge-patch body as required", () => {
     // RFC 7386: a merge patch carries only what changes. Ditto's PatchThing still lists
     // required: [thingId, policyId], which would push a model to send (or guess) a policyId.

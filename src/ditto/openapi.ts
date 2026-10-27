@@ -74,21 +74,30 @@ type BodyContent = Record<string, { schema?: unknown }>;
 
 export const MERGE_PATCH = "application/merge-patch+json";
 
-// Ditto rejects a body sent with a media type the route does not accept (PATCH takes only
-// application/merge-patch+json, search POST only form-encoded), so send a declared one.
-function contentTypeOf(content: BodyContent | undefined): string | undefined {
-  const types = Object.keys(content ?? {});
-  return types.includes("application/json") ? "application/json" : types[0];
+/** "Application/JSON; charset=utf-8" -> "application/json". */
+export function mediaType(contentType: string): string {
+  return contentType.split(";")[0].trim().toLowerCase();
 }
 
-function bodySchemaOf(s: SpecShape, content: BodyContent | undefined, contentType: string | undefined): BodySchema | undefined {
-  const schemaRef = contentType ? content?.[contentType]?.schema : undefined;
+// Ditto rejects a body sent with a media type the route does not accept (PATCH takes only
+// application/merge-patch+json, search POST only form-encoded), so send a declared one:
+// application/json when listed, else the first concrete type. A wildcard such as "*/*" is no
+// Content-Type; for that, send JSON. `key` is the content entry the body schema comes from.
+function bodyMediaOf(content: BodyContent | undefined): { key: string; contentType: string } | undefined {
+  const types = Object.keys(content ?? {});
+  const concrete = types.filter((t) => !t.includes("*"));
+  const key = concrete.find((t) => mediaType(t) === "application/json") ?? concrete[0] ?? types[0];
+  if (key === undefined) return undefined;
+  return { key, contentType: key.includes("*") ? "application/json" : key };
+}
+
+function bodySchemaOf(s: SpecShape, schemaRef: unknown, contentType: string): BodySchema | undefined {
   const schema = resolveSchemaRef(s, schemaRef) as
     | { type?: string; properties?: Record<string, unknown>; required?: string[] } | undefined;
   if (!schema || schema.type !== "object" || !schema.properties) return undefined;
   // A merge patch (RFC 7386) carries only what changes, so none of its fields is required,
   // whatever the target resource's schema says.
-  const required = new Set(contentType === MERGE_PATCH ? [] : schema.required ?? []);
+  const required = new Set(mediaType(contentType) === MERGE_PATCH ? [] : schema.required ?? []);
   const props: BodyProp[] = Object.entries(schema.properties).map(([name, p]) => ({
     name,
     type: bodyPropType(p), // pass the full property schema
@@ -153,7 +162,7 @@ export function parseOperations(spec: unknown): DittoOperation[] {
       );
       const hasBody = op.requestBody !== undefined;
       const content = resolveRequestBody(s, op.requestBody)?.content;
-      const contentType = hasBody ? contentTypeOf(content) : undefined;
+      const media = hasBody ? bodyMediaOf(content) : undefined;
       ops.push({
         operationId: op.operationId ?? `${method.toUpperCase()}_${path}`,
         method: method.toUpperCase(),
@@ -162,8 +171,8 @@ export function parseOperations(spec: unknown): DittoOperation[] {
         description: op.description ?? op.summary ?? "",
         params,
         hasBody,
-        contentType,
-        bodySchema: hasBody ? bodySchemaOf(s, content, contentType) : undefined,
+        contentType: media?.contentType,
+        bodySchema: media ? bodySchemaOf(s, content?.[media.key]?.schema, media.contentType) : undefined,
         securitySchemes,
       });
     }

@@ -87,6 +87,18 @@ describe("HttpDittoClient", () => {
     expect(fake.requests[0].body).toBe('"red"');
   });
 
+  it("JSON-encodes a string value for a JSON media type with parameters", async () => {
+    fake = await startFakeDitto(() => ({ status: 204, body: "" }));
+    const client = new HttpDittoClient(fake.baseUrl);
+    await client.execute(
+      op({ method: "PUT", path: "/things/ns:1/attributes/color", hasBody: true,
+           contentType: "application/json; charset=utf-8" }),
+      { body: "red" },
+      cred(),
+    );
+    expect(fake.requests[0].body).toBe('"red"');
+  });
+
   it("form-encodes the body of a form operation", async () => {
     fake = await startFakeDitto(() => ({ status: 200, body: "{}" }));
     const client = new HttpDittoClient(fake.baseUrl);

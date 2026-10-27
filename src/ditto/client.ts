@@ -11,7 +11,7 @@
  * SPDX-License-Identifier: EPL-2.0
  */
 
-import type { DittoOperation } from "./openapi.js";
+import { mediaType, type DittoOperation } from "./openapi.js";
 import type { DittoCredential } from "./credential.js";
 
 export interface DittoResponse {
@@ -86,9 +86,10 @@ export class HttpDittoClient implements DittoClient {
 }
 
 function encodeBody(value: unknown, contentType: string): string {
-  if (contentType === "application/json" || contentType.endsWith("+json")) return JSON.stringify(value);
+  const type = mediaType(contentType);
+  if (type === "application/json" || type.endsWith("+json")) return JSON.stringify(value);
   if (typeof value === "string") return value;
-  if (contentType === "application/x-www-form-urlencoded" && value !== null && typeof value === "object") {
+  if (type === "application/x-www-form-urlencoded" && value !== null && typeof value === "object") {
     return new URLSearchParams(Object.entries(value).map(([k, v]) => [k, String(v)])).toString();
   }
   return JSON.stringify(value);
