@@ -110,7 +110,7 @@ async function callThing(url: string, headers: Record<string, string>): Promise<
   const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } });
   const client = new Client({ name: "http-test", version: "0.0.0" });
   await client.connect(transport);
-  await client.callTool({ name: "getThingById", arguments: { thingId: "ns:thing" } });
+  await client.callTool({ name: "ditto_getThingById", arguments: { thingId: "ns:thing" } });
   await client.close();
 }
 

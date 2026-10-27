@@ -497,11 +497,13 @@ When running, the server exposes:
 
 **Action tools (if `ditto.enabled: true`):**
 
-Dynamically generated from the Ditto OpenAPI spec. Examples:
-- `getThing`, `putThing`, `modifyThing`, `deleteThing`
-- `getPolicy`, `putPolicy`, `modifyPolicy`, `deletePolicy`
-- `getConnections`, `createConnection`, `modifyConnection`, `deleteConnection` (sudo, requires devops credential + `sudoAllowlist`)
-- `sudoRetrieveThing`, `piggybackSend` (sudo)
+Dynamically generated from the Ditto OpenAPI spec. Every action tool name starts with `ditto_`, so a spec operation can never shadow a core or knowledge tool. Ditto's spec declares no `operationId`s, so names are built from the method and path, without the `/api/2` prefix and keeping only a trailing path parameter (the tool description always carries the full `METHOD path`). Examples:
+- `ditto_GET_things_thingId`, `ditto_PUT_things_thingId`, `ditto_PATCH_things_thingId`, `ditto_DELETE_things_thingId`
+- `ditto_GET_policies_policyId`, `ditto_PUT_policies_policyId`, `ditto_DELETE_policies_policyId`
+- `ditto_GET_connections`, `ditto_POST_connections`, `ditto_DELETE_connections_connectionId` (sudo, requires devops credential + `sudoAllowlist`)
+- `ditto_POST_devops_piggyback` (sudo)
+
+A spec that does declare `operationId`s gets `ditto_<operationId>`. Names are capped at 64 characters; a longer one is cut and ends in a short hash of its operation, so names stay distinct.
 
 Write tools (POST, PATCH, PUT) expose their top-level request body fields in the tool schema, allowing clients to discover and validate the shape of the request. Nested objects are passed through as freeform JSON.
 

@@ -21,7 +21,7 @@ import type { DittoClient } from "./client.js";
 import { HttpDittoClient } from "./client.js";
 import { parseOperations } from "./openapi.js";
 import { isAllowed } from "./tool-policy.js";
-import { operationToTool, type ToolCredentials } from "./action-tool.js";
+import { MAX_TOOL_NAME, operationToTool, type ToolCredentials } from "./action-tool.js";
 import { createConfigCredential } from "./credential.js";
 
 export interface ActionToolDeps {
@@ -89,13 +89,16 @@ export async function makeActionTools(config: AppConfig, deps: ActionToolDeps = 
   const tools = parseOperations(spec)
     .filter((op) => isAllowed(op, config.ditto.policy))
     .map((op) => operationToTool(op, client, creds));
-  // De-duplicate tool names: on collision, append _2, _3, ...
+  // De-duplicate tool names: on collision, append _2, _3, ... within the length limit.
   const seen = new Map<string, number>();
   for (const tool of tools) {
     const base = tool.name;
     const count = seen.get(base) ?? 0;
     seen.set(base, count + 1);
-    if (count > 0) tool.name = `${base}_${count + 1}`;
+    if (count > 0) {
+      const suffix = `_${count + 1}`;
+      tool.name = `${base.slice(0, MAX_TOOL_NAME - suffix.length)}${suffix}`;
+    }
   }
   return tools;
 }

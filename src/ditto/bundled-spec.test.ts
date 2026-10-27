@@ -17,6 +17,8 @@ import YAML from "yaml";
 import { parseOperations } from "./openapi.js";
 import { isSudo } from "./tool-policy.js";
 import { BUNDLED_SPEC_PATH as specPath } from "./action-tools.js";
+import { operationToTool } from "./action-tool.js";
+import { HttpDittoClient } from "./client.js";
 
 describe("bundled Ditto spec", () => {
   it("parses and yields operations incl. a things GET with a resolved path param", () => {
@@ -57,6 +59,14 @@ describe("bundled Ditto spec", () => {
     for (const op of patches) expect(op.contentType, op.path).toBe("application/merge-patch+json");
     const patchThing = patches.find((o) => o.path === "/api/2/things/{thingId}");
     expect(patchThing!.bodySchema!.props.map((p) => p.name)).toContain("attributes");
+  });
+
+  it("gives every bundled operation a distinct tool name of at most 64 chars", () => {
+    const ops = parseOperations(YAML.parse(readFileSync(specPath, "utf8")));
+    const client = new HttpDittoClient("http://ditto");
+    const names = ops.map((op) => operationToTool(op, client, { standard: { authHeader: async () => undefined } }).name);
+    expect(new Set(names).size).toBe(ops.length);
+    expect(names.filter((n) => n.length > 64)).toEqual([]);
   });
 
   it("sends a search POST form-encoded", () => {

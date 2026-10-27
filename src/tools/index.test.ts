@@ -12,6 +12,9 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { registerTools } from "./index.js";
 import { AppConfigSchema } from "../config/schema.js";
 import { KnowledgeService } from "../knowledge/knowledge-service.js";
@@ -40,7 +43,7 @@ describe("registerTools wiring", () => {
 
   it("omits action tools when ditto disabled (default)", async () => {
     const reg = await registerTools(AppConfigSchema.parse({}));
-    expect(reg.list().some((t) => t.name === "getThingById")).toBe(false);
+    expect(reg.list().some((t) => t.name.startsWith("ditto_"))).toBe(false);
   });
 
   it("omits knowledge tools when knowledge disabled", async () => {
@@ -57,6 +60,25 @@ describe("registerTools wiring", () => {
     );
     expect(reg.get("search")).toBeUndefined();
     expect(reg.get("get_chunk")).toBeUndefined();
+  });
+
+  it("registers an action tool named like a built-in beside it, under the ditto_ prefix", async () => {
+    // A custom spec may declare operationIds such as "search"; that must not crash startup.
+    const specPath = join(mkdtempSync(join(tmpdir(), "mcp-tools-")), "spec.json");
+    writeFileSync(specPath, JSON.stringify({ paths: {
+      "/search": { get: { operationId: "search" } },
+      "/ping": { get: { operationId: "ping" } },
+    } }));
+    store = new SqliteKnowledgeStore(":memory:");
+    const service = new KnowledgeService(store, new FtsRetriever(store));
+    const reg = await registerTools(
+      AppConfigSchema.parse({
+        knowledge: { enabled: true },
+        ditto: { enabled: true, baseUrl: "http://ditto", openApi: { path: specPath } },
+      }),
+      service,
+    );
+    expect(reg.list().map((t) => t.name).sort()).toEqual(["ditto_ping", "ditto_search", "get_chunk", "ping", "search"]);
   });
 
   it("registers knowledge tools when enabled and service provided", async () => {
