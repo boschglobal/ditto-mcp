@@ -76,6 +76,15 @@ describe("SessionTable", () => {
     expect(table.get("a")).toBeDefined();
   });
 
+  it("keeps counting a reservation whose session to replace was swept meanwhile", () => {
+    const { table, open, advance } = setup(1, 1000);
+    open("a");
+    expect(table.reserve()).toBeDefined(); // will replace a
+    advance(1001);
+    table.sweep(); // a goes away on its own; the reservation still holds the only slot
+    expect(table.reserve()).toBeUndefined();
+  });
+
   it("gives concurrent reservations different sessions to replace", () => {
     const { table, open, advance } = setup(2);
     const a = open("a");

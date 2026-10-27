@@ -114,6 +114,7 @@ export class SessionTable<T extends { close(): Promise<void> }> {
   private close(session: Session<T>): void {
     if (this.sessions.get(session.id) !== session) return; // already gone
     this.sessions.delete(session.id);
+    this.doomed.delete(session);
     void session.transport.close();
   }
 
