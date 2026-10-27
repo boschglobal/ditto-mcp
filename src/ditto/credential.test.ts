@@ -61,6 +61,25 @@ describe("credentials", () => {
     expect(calls).toBe(1);
   });
 
+  it("oidc: an already-cancelled caller starts no token fetch and leaves no rejection unhandled", async () => {
+    // A tools/call and its notifications/cancelled can arrive in one batch, so the handler may
+    // start with an aborted signal. A failing fetch nobody awaits would crash the process.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      let calls = 0;
+      const fetchFn = (async () => { calls++; throw new TypeError("fetch failed"); }) as typeof fetch;
+      const c = new OidcClientCredential({ tokenUrl: "http://idp/token", clientId: "c", clientSecret: "s" }, fetchFn);
+      await expect(c.authHeader(AbortSignal.abort())).rejects.toMatchObject({ name: "AbortError" });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toEqual([]);
+      expect(calls).toBe(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("oidc sends grant_type=client_credentials, Basic auth, and scope (when set)", async () => {
     const oidc = await startFakeOidc({ access_token: "tok", expires_in: 3600 });
     try {

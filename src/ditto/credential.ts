@@ -43,7 +43,8 @@ export class OidcClientCredential implements DittoCredential {
     if (this.token && now < this.expiresAt) return `Bearer ${this.token}`;
     // Every caller needing a token awaits the same fetch, so it must not carry any one
     // caller's signal: a single cancelled tool call would fail all the others. A caller whose
-    // signal aborts just stops waiting.
+    // signal aborts just stops waiting; one that already gave up starts no fetch.
+    signal?.throwIfAborted();
     if (!this.inflight) this.inflight = this.fetchToken().finally(() => { this.inflight = undefined; });
     const token = await untilAborted(this.inflight, signal);
     return `Bearer ${token}`;
@@ -72,10 +73,11 @@ export class OidcClientCredential implements DittoCredential {
 function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
   return new Promise<T>((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason);
     const onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
+    // Handle `promise` before anything else, so its rejection is never left unhandled.
     promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
