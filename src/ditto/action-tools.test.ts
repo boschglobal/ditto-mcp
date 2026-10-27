@@ -143,6 +143,19 @@ describe("makeActionTools", () => {
     expect(names).toEqual([base, `${base.slice(0, 62)}_2`]);
   });
 
+  it("fails, naming the cause, when the spec cannot be loaded", async () => {
+    // Built once at startup: silently serving no action tools would last until a restart.
+    const config = AppConfigSchema.parse({ ditto: { enabled: true, baseUrl: "http://ditto" } });
+    await expect(makeActionTools(config, {
+      loadSpec: async () => { throw new Error("openapi fetch https://mirror/spec.yml -> 503"); },
+    })).rejects.toThrow(/Ditto action tools.*openapi fetch https:\/\/mirror\/spec\.yml -> 503/);
+  });
+
+  it("fails when ditto is enabled without a baseUrl", async () => {
+    const config = AppConfigSchema.parse({ ditto: { enabled: true } });
+    await expect(makeActionTools(config, { loadSpec: async () => SPEC })).rejects.toThrow(/ditto\.baseUrl/);
+  });
+
   it("a sudo tool refuses at call time when no devopsCredential is configured", async () => {
     const { byName, config } = await tools({ allowMethods: ["GET"], writeAllowlist: [], sudoAllowlist: ["sudoRetrieveThing"] });
     const res = await byName.ditto_sudoRetrieveThing.handler({ thingId: "ns:1" }, { config, headers: {} } as never);

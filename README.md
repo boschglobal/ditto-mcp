@@ -398,6 +398,8 @@ The server can expose action tools dynamically generated from a Ditto OpenAPI sp
 
 Spec resolution precedence (first match wins): `path` > `url` > `version` > the bundled spec (`openapi/ditto-api-2.yml`, a copy of Ditto's spec — see `openapi/README.md` for its source revision), which is baked into the Docker image and works offline. Set `version` to target a different Ditto release at runtime (requires network).
 
+The action tools are built once at startup. With `ditto.enabled: true`, a spec that cannot be loaded (unreachable URL, bad file) or a missing `ditto.baseUrl` stops the server with a `fatal:` error naming the cause, instead of it running without action tools until the next restart.
+
 #### Credentials
 
 Action tools support two credential modes:

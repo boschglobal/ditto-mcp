@@ -31,7 +31,12 @@ function runWith(config: unknown): Promise<{ code: number | null; stderr: string
   child.stderr.on("data", (c) => {
     stderr += String(c);
   });
-  return new Promise((res) => child.on("close", (code) => res({ code, stderr })));
+  // A server that should have exited but keeps running must not outlive the test.
+  const timer = setTimeout(() => child.kill(), 20_000);
+  return new Promise((res) => child.on("close", (code) => {
+    clearTimeout(timer);
+    res({ code, stderr });
+  }));
 }
 
 describe("http entrypoint (spawn e2e)", () => {
@@ -46,5 +51,17 @@ describe("http entrypoint (spawn e2e)", () => {
     expect(stderr).toContain("server.http.auth");
     // An operator hitting this on first run should get the fix, not a V8 stack trace.
     expect(stderr).not.toContain("at createHttpApp");
+  }, 30_000);
+
+  it("exits with a readable error when the OpenAPI spec cannot be loaded", async () => {
+    // fetch refuses port 9 outright ("bad port"): a spec URL that cannot be reached.
+    const { code, stderr } = await runWith({
+      knowledge: { enabled: false },
+      ditto: { enabled: true, baseUrl: "http://127.0.0.1:9", openApi: { url: "http://127.0.0.1:9/spec.yml" } },
+    });
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("[ditto-mcp] fatal:");
+    expect(stderr).toContain("http://127.0.0.1:9/spec.yml");
   }, 30_000);
 });

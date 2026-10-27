@@ -23,6 +23,7 @@ import { parseOperations } from "./openapi.js";
 import { isAllowed } from "./tool-policy.js";
 import { MAX_TOOL_NAME, operationToTool, type ToolCredentials } from "./action-tool.js";
 import { createConfigCredential } from "./credential.js";
+import { errorReason } from "../knowledge/ingest-error.js";
 
 export interface ActionToolDeps {
   loadSpec?: () => Promise<unknown>;
@@ -44,7 +45,13 @@ export function buildVersionUrl(template: string, version: string): string {
 }
 
 async function fetchSpec(url: string): Promise<unknown> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  } catch (err) {
+    // Node's fetch says only "fetch failed"; name the URL so the operator knows what to fix.
+    throw new Error(`openapi fetch ${url}: ${errorReason(err)}`);
+  }
   if (!res.ok) throw new Error(`openapi fetch ${url} -> ${res.status}`);
   return YAML.parse(await res.text());
 }
@@ -65,16 +72,16 @@ export async function makeActionTools(config: AppConfig, deps: ActionToolDeps = 
     (config.ditto.baseUrl
       ? new HttpDittoClient(config.ditto.baseUrl)
       : undefined);
+  // The tools are built once at startup, so fail it rather than serve without them until a
+  // restart: an orchestrator then retries, and the cause is in front of the operator.
   if (!client) {
-    process.stderr.write("[ditto-mcp] action tools disabled: ditto.baseUrl is required\n");
-    return [];
+    throw new Error("ditto.enabled is true but ditto.baseUrl is not set");
   }
   let spec: unknown;
   try {
     spec = deps.loadSpec ? await deps.loadSpec() : await defaultLoadSpec(config);
   } catch (err) {
-    process.stderr.write(`[ditto-mcp] action tools disabled: ${String(err)}\n`);
-    return [];
+    throw new Error(`cannot build the Ditto action tools: ${errorReason(err)}`, { cause: err });
   }
   const dc = config.ditto.devopsCredential;
   if (dc?.kind === "basic" && dc.username === undefined) {
