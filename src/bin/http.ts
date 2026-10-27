@@ -15,11 +15,13 @@
 import { loadConfig } from "../config/load.js";
 import { createHttpApp } from "../server/http-app.js";
 import { buildKnowledgeService } from "../knowledge/build.js";
+import { registerTools } from "../tools/index.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env.DITTO_MCP_CONFIG);
   const knowledge = await buildKnowledgeService(config);
-  const app = createHttpApp(config, knowledge);
+  const registry = await registerTools(config, knowledge);
+  const app = createHttpApp(config, registry);
   app.listen(config.server.http.port, config.server.http.host, () => {
     process.stderr.write(
       `[ditto-mcp] http server listening on ${config.server.http.host}:${config.server.http.port}/mcp\n`,

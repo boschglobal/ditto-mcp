@@ -17,9 +17,8 @@ import { readFileSync } from "node:fs";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig, HttpAuthConfig } from "../config/schema.js";
-import { registerTools } from "../tools/index.js";
+import type { ToolRegistry } from "../registry/tool-registry.js";
 import { buildServer } from "./build-server.js";
-import type { KnowledgeService } from "../knowledge/knowledge-service.js";
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
@@ -74,9 +73,14 @@ function bearerAuthMiddleware(auth: HttpAuthConfig) {
   };
 }
 
+/**
+ * `registry` is built once at startup and shared by every session: rebuilding it per session
+ * re-read (or re-fetched) the OpenAPI spec and gave each session fresh credentials with empty
+ * token caches. Only the McpServer and its transport are per session.
+ */
 export function createHttpApp(
   config: AppConfig,
-  knowledgeService?: KnowledgeService,
+  registry: ToolRegistry,
 ): Express {
   // Fail closed: an unauthenticated endpoint on a routable interface hands every caller the
   // server's Ditto identity — including `devopsCredential`, which reaches /devops and the
@@ -153,7 +157,6 @@ export function createHttpApp(
         transport.onclose = () => {
           if (transport?.sessionId) transports.delete(transport.sessionId);
         };
-        const registry = await registerTools(config, knowledgeService);
         const server = buildServer(registry, config);
         await server.connect(transport);
       }

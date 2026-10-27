@@ -22,6 +22,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { AppConfigSchema } from "../config/schema.js";
 import { startFakeDitto } from "../ditto/fake-ditto.js";
 import { createHttpApp } from "./http-app.js";
+import { registerTools } from "../tools/index.js";
+import { ToolRegistry } from "../registry/tool-registry.js";
+import { startFakeOidc } from "../ditto/fake-oidc.js";
 
 async function listen(http: Record<string, unknown> = {}): Promise<{ server: Server; url: string }> {
   // protocol e2e; DNS-rebinding protection exercised separately below.
@@ -30,7 +33,7 @@ async function listen(http: Record<string, unknown> = {}): Promise<{ server: Ser
     server: { http: { enableDnsRebindingProtection: false, ...http } },
     knowledge: { enabled: false },
   });
-  const app = createHttpApp(config);
+  const app = createHttpApp(config, await registerTools(config));
   return await new Promise((res) => {
     const server = app.listen(0, () => {
       const addr = server.address();
@@ -72,7 +75,10 @@ const SPEC_YML = [
 ].join("\n");
 
 /** An app with real action tools pointed at a fake Ditto, so we can inspect what it sends upstream. */
-async function listenWithDitto(http: Record<string, unknown>): Promise<{
+async function listenWithDitto(
+  http: Record<string, unknown>,
+  credential: object = { kind: "basic", username: "svc", password: "pw" },
+): Promise<{
   url: string;
   fake: Awaited<ReturnType<typeof startFakeDitto>>;
   stop: () => Promise<void>;
@@ -87,12 +93,13 @@ async function listenWithDitto(http: Record<string, unknown>): Promise<{
       enabled: true,
       baseUrl: fake.baseUrl,
       openApi: { path: specPath },
-      credential: { kind: "basic", username: "svc", password: "pw" },
+      credential,
       policy: { allowMethods: ["GET"] },
     },
   });
+  const app = createHttpApp(config, await registerTools(config));
   const server = await new Promise<Server>((res) => {
-    const srv = createHttpApp(config).listen(0, () => res(srv));
+    const srv = app.listen(0, () => res(srv));
   });
   const addr = server.address();
   const port = typeof addr === "object" && addr ? addr.port : 0;
@@ -171,7 +178,7 @@ describe("streamable HTTP app (e2e)", () => {
     // Default config has DNS-rebinding protection enabled
     // knowledge disabled to keep this transport test hermetic; knowledge covered in knowledge tests.
     const config = AppConfigSchema.parse({ knowledge: { enabled: false } });
-    const app = createHttpApp(config);
+    const app = createHttpApp(config, new ToolRegistry());
     const server = await new Promise<Server>((res) => {
       const srv = app.listen(0, () => res(srv));
     });
@@ -212,6 +219,22 @@ describe("streamable HTTP app (e2e)", () => {
 
     expect(statusCode).toBe(403);
     await new Promise<void>((r) => server.close(() => r()));
+  });
+});
+
+describe("tool set lifetime", () => {
+  it("builds the tools once, so every session shares one OIDC token", async () => {
+    // Per-session tools meant a new credential, and a new IdP token request, per session.
+    const oidc = await startFakeOidc({ access_token: "tok", expires_in: 3600 });
+    const { url, fake, stop } = await listenWithDitto({}, {
+      kind: "oidc", tokenUrl: oidc.tokenUrl, clientId: "c", clientSecret: "s",
+    });
+    await callThing(url, {});
+    await callThing(url, {});
+    expect(fake.requests.map((r) => r.auth)).toEqual(["Bearer tok", "Bearer tok"]);
+    expect(oidc.calls).toBe(1);
+    await stop();
+    await oidc.stop();
   });
 });
 
@@ -293,7 +316,7 @@ describe("bearer auth on /mcp", () => {
       server: { http: { host: "0.0.0.0" } },
       knowledge: { enabled: false },
     });
-    expect(() => createHttpApp(config)).toThrow(/auth/i);
+    expect(() => createHttpApp(config, new ToolRegistry())).toThrow(/auth/i);
   });
 
   it("serves ping when the correct token is supplied", async () => {
