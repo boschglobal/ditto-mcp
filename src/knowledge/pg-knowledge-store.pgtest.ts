@@ -228,6 +228,20 @@ describe("PgKnowledgeStore", () => {
     expect(await indexes(`${live}_vec`)).toEqual([`${live}_vec_idx`, `${live}_vec_pkey`]);
   });
 
+  it("loads more rows than one insert batch, keeping the last of an id repeated across batches", async () => {
+    const s = await fresh();
+    await s.ensureVectorTable(3);
+    const rows = Array.from({ length: 1203 }, (_, i) => chunk(`c${i}`, `text ${i}`));
+    rows.push(chunk("c10", "replaced")); // c10 first sits in batch 1, its replacement in batch 3
+    await s.addChunks(rows);
+    await s.upsertVectors(rows.map((c, i) => ({ id: c.id, vector: [1, i, 0] })));
+    expect((await s.ftsSearch("text", 2000)).length).toBe(1202); // all but the replaced c10
+    expect((await s.getChunk("c10"))?.text).toBe("replaced");
+    expect((await s.getChunk("c1202"))?.text).toBe("text 1202");
+    expect((await s.vectorSearch([1, 0, 0], 2000)).length).toBe(1203);
+    await s.close();
+  });
+
   it("keeps the last of a repeated id within one batch of chunks or vectors", async () => {
     const s = await fresh();
     await s.ensureVectorTable(3);
