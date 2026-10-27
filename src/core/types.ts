@@ -19,6 +19,10 @@ export interface ToolResult {
   [key: string]: unknown;
 }
 
+export function textResult(text: string): ToolResult {
+  return { content: [{ type: "text", text }] };
+}
+
 export interface RequestCtx {
   config: AppConfig;
   /** Present for HTTP sessions; absent over stdio. */

@@ -13,7 +13,7 @@
 
 import pg from "pg";
 import type { Chunk } from "./types.js";
-import type { IndexMeta, KnowledgeStore } from "./knowledge-store.js";
+import { ftsTokens, type IndexMeta, type KnowledgeStore } from "./knowledge-store.js";
 import { IngestError } from "./ingest-error.js";
 
 /** A held per-table ingest lock (a session-level advisory lock on a dedicated connection). */
@@ -176,7 +176,7 @@ export class PgKnowledgeStore implements KnowledgeStore {
   }
 
   async ftsSearch(query: string, k: number): Promise<string[]> {
-    const tokens = [...query.matchAll(/[\p{L}\p{N}]+/gu)].map((m) => m[0]);
+    const tokens = ftsTokens(query);
     if (tokens.length === 0) return [];
     const tsquery = tokens.join(" | ");
     const r = await this.pool.query(

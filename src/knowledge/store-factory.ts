@@ -14,15 +14,15 @@
 import type { AppConfig } from "../config/schema.js";
 import type { KnowledgeStore } from "./knowledge-store.js";
 import type { PgKnowledgeStore as PgKnowledgeStoreType } from "./pg-knowledge-store.js";
+import { errorReason } from "./ingest-error.js";
 
-const reason = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export async function importPgStore(): Promise<typeof PgKnowledgeStoreType> {
   try {
     const { PgKnowledgeStore } = await import("./pg-knowledge-store.js");
     return PgKnowledgeStore;
   } catch (e) {
-    throw new Error(`pgvector store requires the 'pg' package, which failed to load: ${reason(e)}.`);
+    throw new Error(`pgvector store requires the 'pg' package, which failed to load: ${errorReason(e)}.`);
   }
 }
 
@@ -44,7 +44,7 @@ export async function openStore(
       ({ SqliteKnowledgeStore } = await import("./sqlite-knowledge-store.js"));
     } catch (e) {
       throw new Error(
-        `sqlite store requires better-sqlite3 + sqlite-vec, which failed to load: ${reason(e)}. ` +
+        `sqlite store requires better-sqlite3 + sqlite-vec, which failed to load: ${errorReason(e)}. ` +
           `Install them, or set knowledge.store.kind=pgvector.`,
       );
     }

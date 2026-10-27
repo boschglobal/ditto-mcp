@@ -14,7 +14,7 @@
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import type { Chunk } from "./types.js";
-import type { KnowledgeStore, IndexMeta } from "./knowledge-store.js";
+import { ftsTokens, type KnowledgeStore, type IndexMeta } from "./knowledge-store.js";
 
 export class SqliteKnowledgeStore implements KnowledgeStore {
   private readonly db: Database.Database;
@@ -146,7 +146,7 @@ export class SqliteKnowledgeStore implements KnowledgeStore {
 
 /** Arbitrary user text -> safe FTS5 MATCH (word tokens, quoted, OR-joined). */
 function toMatchQuery(query: string): string {
-  const tokens = query.match(/[\p{L}\p{N}]+/gu);
-  if (!tokens || tokens.length === 0) return "";
+  const tokens = ftsTokens(query);
+  if (tokens.length === 0) return "";
   return tokens.map((t) => `"${t}"`).join(" OR ");
 }

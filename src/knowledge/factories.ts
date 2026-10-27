@@ -13,6 +13,7 @@
 
 import type { AppConfig } from "../config/schema.js";
 import type { KnowledgeSource } from "./types.js";
+import { errorReason } from "./ingest-error.js";
 import type { EmbeddingProvider } from "./embedding.js";
 import { PublicSource, type FetchFn } from "./public-source.js";
 import { LocalDirSource } from "./local-dir-source.js";
@@ -55,9 +56,8 @@ export async function makeEmbedder(config: AppConfig, deps?: FactoryDeps): Promi
   try {
     ({ LocalEmbeddings } = await import("./embedding.js"));
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `local embeddings require @huggingface/transformers, which failed to load: ${reason}. ` +
+      `local embeddings require @huggingface/transformers, which failed to load: ${errorReason(err)}. ` +
         `Install it, inject deps.embeddingProvider, or use retriever=fts (no embeddings).`,
     );
   }

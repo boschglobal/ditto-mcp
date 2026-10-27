@@ -12,7 +12,7 @@
  */
 
 import { z } from "zod";
-import type { ToolDef, ToolResult } from "../core/types.js";
+import { textResult, type ToolDef, type ToolResult } from "../core/types.js";
 import type { Chunk, RetrievedChunk } from "../knowledge/types.js";
 import type { KnowledgeService } from "../knowledge/knowledge-service.js";
 
@@ -26,10 +26,6 @@ function formatRetrievedChunk(rc: RetrievedChunk): string {
   // them so their relevance isn't over-weighted vs. the actual anchors.
   const tag = rc.role === "context" ? "context" : `matched: ${rc.matchedBy.join("+")}`;
   return formatChunk(rc.chunk, ` · ${tag}`);
-}
-
-function textResult(text: string): ToolResult {
-  return { content: [{ type: "text", text }] };
 }
 
 export interface SearchDefaults {

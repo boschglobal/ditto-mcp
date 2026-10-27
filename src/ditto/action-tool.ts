@@ -13,7 +13,7 @@
 
 import { createHash } from "node:crypto";
 import { z, type ZodRawShape } from "zod";
-import type { ToolDef, ToolResult, RequestCtx } from "../core/types.js";
+import { textResult, type ToolDef, type ToolResult, type RequestCtx } from "../core/types.js";
 import type { DittoOperation } from "./openapi.js";
 import type { DittoClient } from "./client.js";
 import type { DittoCredential } from "./credential.js";
@@ -75,10 +75,6 @@ function inputSchema(op: DittoOperation): ZodRawShape {
   return shape;
 }
 
-function text(t: string): ToolResult {
-  return { content: [{ type: "text", text: t }] };
-}
-
 export interface ToolCredentials {
   standard: DittoCredential;
   devops?: DittoCredential;
@@ -96,11 +92,11 @@ export function operationToTool(op: DittoOperation, client: DittoClient, creds: 
       // Non-sudo ops always have `standard`; sudo ops require the `devops` slot.
       const base = sudo ? creds.devops : creds.standard;
       if (!base) {
-        return text(`Refused: "${op.operationId}" is a sudo operation and requires ditto.devopsCredential.`);
+        return textResult(`Refused: "${op.operationId}" is a sudo operation and requires ditto.devopsCredential.`);
       }
       // The server calls Ditto only as itself: caller headers never select or replace the credential.
       const res = await client.execute(op, (args ?? {}) as Record<string, unknown>, base, ctx.signal);
-      return text(`HTTP ${res.status}\n${res.body}`);
+      return textResult(`HTTP ${res.status}\n${res.body}`);
     },
   };
 }

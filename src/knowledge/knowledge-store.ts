@@ -15,6 +15,11 @@ import type { Chunk } from "./types.js";
 
 export const SCHEMA_VERSION = 1;
 
+/** The word tokens of free text, for keyword (FTS) search. */
+export function ftsTokens(query: string): string[] {
+  return query.match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
 export interface IndexMeta {
   schemaVersion: number;
   retriever: string;
