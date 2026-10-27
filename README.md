@@ -214,6 +214,8 @@ Ingest fails if any item fails to load, so it never writes a partial index. An i
 - a local file cannot be read
 - a document listed in `llms.txt` fails to download
 
+Links in `llms.txt` that are not to markdown documents are ignored, and so are malformed links (with a warning on stderr): neither counts as a failed item, since re-running cannot fix them.
+
 If an ingest fails, the existing index is left unchanged.
 
 ```bash

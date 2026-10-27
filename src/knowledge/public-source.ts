@@ -58,7 +58,7 @@ export class PublicSource implements KnowledgeSource {
     } catch (err) {
       throw new Error(`cannot fetch ${this.opts.url}: ${errorReason(err)}`);
     }
-    let entries = parseEntries(index, this.opts.url, onSkip);
+    let entries = parseEntries(index, this.opts.url);
     if (this.opts.maxDocs !== undefined) {
       entries = entries.slice(0, this.opts.maxDocs);
     }
@@ -93,7 +93,7 @@ export class PublicSource implements KnowledgeSource {
   }
 }
 
-function parseEntries(index: string, baseUrl: string, onSkip?: SkipFn): Entry[] {
+function parseEntries(index: string, baseUrl: string): Entry[] {
   const re = /- \[([^\]]+)\]\(([^)]+)\)/g;
   const entries: Entry[] = [];
   const seen = new Set<string>();
@@ -105,8 +105,9 @@ function parseEntries(index: string, baseUrl: string, onSkip?: SkipFn): Entry[] 
     try {
       resolved = new URL(link, baseUrl);
     } catch (err) {
-      // One bad link must not cost the whole index.
-      onSkip?.(link, errorReason(err));
+      // A malformed link is the index's problem and does not heal on re-run, so it is filtered
+      // like a non-markdown link (with a warning), not reported as an item that failed to load.
+      process.stderr.write(`[ditto-mcp] knowledge: ignoring malformed link in ${baseUrl}: ${link} (${errorReason(err)})\n`);
       continue;
     }
     // Guard against SSRF: only allow http/https schemes

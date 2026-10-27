@@ -11,7 +11,7 @@
  * SPDX-License-Identifier: EPL-2.0
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { PublicSource } from "./public-source.js";
 import type { Chunk } from "./types.js";
 
@@ -94,8 +94,14 @@ describe("PublicSource", () => {
     expect(chunks.some((c) => c.cite.endsWith("policies.md"))).toBe(false);
   });
 
-  it("reports a malformed link in the index and loads the rest", async () => {
+  it("warns about a malformed link in the index, skips it without failing, and loads the rest", async () => {
+    // A broken upstream link does not heal on re-run, so it must not fail a strict ingest.
     const skipped: Array<[string, string]> = [];
+    const warnings: string[] = [];
+    const write = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      warnings.push(String(chunk));
+      return true;
+    });
     const index = `# Ditto docs
 - [Broken](http://[bad/broken.md): unparseable host
 - [Things](https://eclipse.dev/ditto/things.md): about things`;
@@ -106,7 +112,9 @@ describe("PublicSource", () => {
     const chunks = await src.loadChunks(undefined, (item, reason) => {
       skipped.push([item, reason]);
     });
-    expect(skipped).toEqual([["http://[bad/broken.md", "Invalid URL"]]);
+    write.mockRestore();
+    expect(skipped).toEqual([]);
+    expect(warnings.join("")).toContain("http://[bad/broken.md");
     expect(new Set(chunks.map((c) => c.cite))).toEqual(new Set(["https://eclipse.dev/ditto/things.md"]));
   });
 
