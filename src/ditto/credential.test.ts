@@ -13,7 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import { AppConfigSchema } from "../config/schema.js";
-import { createConfigCredential } from "./credential.js";
+import { createConfigCredential, OidcClientCredential } from "./credential.js";
 import { startFakeOidc } from "./fake-oidc.js";
 
 const cred = (c: object) =>
@@ -38,6 +38,27 @@ describe("credentials", () => {
       expect(await c.authHeader()).toBe("Bearer tok123");
       expect(oidc.calls).toBe(1);
     } finally { await oidc.stop(); }
+  });
+
+  it("oidc: a caller cancelling does not fail the others waiting on the same token fetch", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let calls = 0;
+    const fetchFn = (async (_url: string | URL | Request, init?: RequestInit) => {
+      calls++;
+      await gate;
+      init?.signal?.throwIfAborted();
+      return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }));
+    }) as typeof fetch;
+    const c = new OidcClientCredential({ tokenUrl: "http://idp/token", clientId: "c", clientSecret: "s" }, fetchFn);
+    const cancelled = new AbortController();
+    const first = c.authHeader(cancelled.signal);
+    const second = c.authHeader(new AbortController().signal);
+    cancelled.abort();
+    release();
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    await expect(second).resolves.toBe("Bearer tok");
+    expect(calls).toBe(1);
   });
 
   it("oidc sends grant_type=client_credentials, Basic auth, and scope (when set)", async () => {

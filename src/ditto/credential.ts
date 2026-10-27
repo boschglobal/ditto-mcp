@@ -41,22 +41,23 @@ export class OidcClientCredential implements DittoCredential {
   async authHeader(signal?: AbortSignal): Promise<string | undefined> {
     const now = Date.now();
     if (this.token && now < this.expiresAt) return `Bearer ${this.token}`;
-    if (!this.inflight) this.inflight = this.fetchToken(signal).finally(() => { this.inflight = undefined; });
-    const token = await this.inflight;
+    // Every caller needing a token awaits the same fetch, so it must not carry any one
+    // caller's signal: a single cancelled tool call would fail all the others. A caller whose
+    // signal aborts just stops waiting.
+    if (!this.inflight) this.inflight = this.fetchToken().finally(() => { this.inflight = undefined; });
+    const token = await untilAborted(this.inflight, signal);
     return `Bearer ${token}`;
   }
 
-  private async fetchToken(signal?: AbortSignal): Promise<string> {
+  private async fetchToken(): Promise<string> {
     const body = new URLSearchParams({ grant_type: "client_credentials" });
     if (this.opts.scope) body.set("scope", this.opts.scope);
     const basic = Buffer.from(`${this.opts.clientId}:${this.opts.clientSecret}`).toString("base64");
-    const timeoutSignal = AbortSignal.timeout(15000);
-    const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     const res = await this.fetchFn(this.opts.tokenUrl, {
       method: "POST",
       headers: { authorization: `Basic ${basic}`, "content-type": "application/x-www-form-urlencoded" },
       body: body.toString(),
-      signal: combinedSignal,
+      signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) throw new Error(`oidc token endpoint ${this.opts.tokenUrl} -> ${res.status}`);
     const json = (await res.json()) as { access_token?: string; expires_in?: number };
@@ -65,6 +66,17 @@ export class OidcClientCredential implements DittoCredential {
     this.expiresAt = Date.now() + Math.max(0, (json.expires_in ?? 300) - 30) * 1000;
     return this.token;
   }
+}
+
+/** Settle with `promise`, or reject with the abort reason as soon as `signal` aborts. */
+function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 /** Build a credential from a single credential-config object (standard or devops slot). */
