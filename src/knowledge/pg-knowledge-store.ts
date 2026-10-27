@@ -99,21 +99,32 @@ export class PgKnowledgeStore implements KnowledgeStore {
     pool.on("error", (err) => {
       process.stderr.write(`[ditto-mcp] pgvector idle connection lost: ${err.message}\n`);
     });
+    const exists = async (name: string) =>
+      (await pool.query("SELECT to_regclass($1) AS reg", [name])).rows[0].reg !== null;
     try {
-      await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
-      await pool.query(
-        `CREATE TABLE IF NOT EXISTS ${prefix}_chunks (
-           id TEXT PRIMARY KEY, source TEXT, title TEXT, text TEXT, cite TEXT,
-           tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(text,''))) STORED
-         )`,
-      );
-      await pool.query(`CREATE INDEX IF NOT EXISTS ${prefix}_chunks_tsv ON ${prefix}_chunks USING GIN (tsv)`);
-      await pool.query(`CREATE TABLE IF NOT EXISTS ${prefix}_meta (id INT PRIMARY KEY CHECK (id = 1), json JSONB NOT NULL)`);
-      const vec = await pool.query(
-        "SELECT to_regclass($1) AS reg",
-        [`${prefix}_vec`],
-      );
-      return new PgKnowledgeStore(pool, prefix, vec.rows[0].reg !== null, table, isStaging);
+      // Only an ingest (which writes the staging tables) creates schema. The server just reads:
+      // Postgres checks CREATE on the schema before IF NOT EXISTS, so DDL here would fail for a
+      // SELECT-only serving role.
+      if (isStaging) {
+        await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
+        await pool.query(
+          `CREATE TABLE IF NOT EXISTS ${prefix}_chunks (
+             id TEXT PRIMARY KEY, source TEXT, title TEXT, text TEXT, cite TEXT,
+             tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(text,''))) STORED
+           )`,
+        );
+        await pool.query(`CREATE INDEX IF NOT EXISTS ${prefix}_chunks_tsv ON ${prefix}_chunks USING GIN (tsv)`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${prefix}_meta (id INT PRIMARY KEY CHECK (id = 1), json JSONB NOT NULL)`);
+      } else {
+        const missing = [];
+        for (const name of [`${prefix}_chunks`, `${prefix}_meta`]) {
+          if (!(await exists(name))) missing.push(name);
+        }
+        if (missing.length > 0) {
+          throw new Error(`pgvector index not built (missing ${missing.join(", ")}); run ingest to build it`);
+        }
+      }
+      return new PgKnowledgeStore(pool, prefix, await exists(`${prefix}_vec`), table, isStaging);
     } catch (e) {
       await pool.end();
       throw e;

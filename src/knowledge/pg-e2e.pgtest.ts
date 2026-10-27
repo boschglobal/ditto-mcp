@@ -69,19 +69,11 @@ describe("pgvector end-to-end", () => {
     expect(hits[0].matchedBy.length).toBeGreaterThan(0);
   });
 
-  it("empty pg store → buildKnowledgeService returns undefined (no auto-write)", async () => {
-    const c = cfg();
-    c.knowledge.store.pgvector!.table = `empty_${Math.floor(performance.now())}`;
-    const { openStore } = await import("./store-factory.js");
-    const store = await openStore(c);
-    expect(await store.isPopulated()).toBe(false); // Confirm empty before building service.
-    await store.close();
-    const svc = await buildKnowledgeService(c, { embeddingProvider: fake });
+  it("never-built pg store → buildKnowledgeService returns undefined (no auto-write)", async () => {
+    const table = `empty_${Math.floor(performance.now())}`;
+    const svc = await buildKnowledgeService(cfg(table), { embeddingProvider: fake });
     expect(svc).toBeUndefined(); // Server does NOT auto-build for pgvector.
-    // Confirm the store is STILL empty (proves no auto-write).
-    const check = await openStore(c);
-    expect(await check.isPopulated()).toBe(false);
-    await check.close();
+    expect(await exists(`${table}_chunks`)).toBe(false); // ...nor create its tables.
   });
 
   it("a failed ingest leaves the live index serving the old data", async () => {

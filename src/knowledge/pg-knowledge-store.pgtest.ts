@@ -23,8 +23,9 @@ let db: Awaited<ReturnType<typeof startPgVector>>;
 beforeAll(async () => { db = await startPgVector(); }, 120000);
 afterAll(async () => { await db?.stop(); });
 
+// A writable store: only an ingest's staging store creates and writes tables.
 async function fresh() {
-  const store = await PgKnowledgeStore.connect(db.connectionString, `t_${Math.floor(performance.now())}`);
+  const store = await PgKnowledgeStore.connect(db.connectionString, `t_${Math.floor(performance.now())}`, { staging: true });
   await store.reset();
   return store;
 }
@@ -226,8 +227,41 @@ describe("PgKnowledgeStore", () => {
   });
 
   it("swapIntoLive refuses on a non-staging store", async () => {
-    const s = await fresh();
+    const live = `sw_${Math.floor(performance.now())}`;
+    const staging = await PgKnowledgeStore.connect(db.connectionString, live, { staging: true });
+    await staging.swapIntoLive();
+    await staging.close();
+    const s = await PgKnowledgeStore.connect(db.connectionString, live);
     await expect(s.swapIntoLive()).rejects.toThrow(/staging/);
     await s.close();
+  });
+
+  it("serves a built index with a SELECT-only role", async () => {
+    // Postgres checks CREATE on the schema before IF NOT EXISTS, so a serving connect that
+    // runs DDL fails for a least-privilege role (and on PG15+ public grants no CREATE).
+    const n = Math.floor(performance.now());
+    const live = `ro_${n}`;
+    const staging = await PgKnowledgeStore.connect(db.connectionString, live, { staging: true });
+    await staging.addChunks([chunk("x", "netty out of memory")]);
+    await staging.setMeta({ embeddingModel: "m", dim: 3, chunkMaxChars: 1, chunkOverlap: 0, sources: [] } as never);
+    await staging.swapIntoLive();
+    await staging.close();
+    await q(`CREATE ROLE reader_${n} LOGIN PASSWORD 'r'`);
+    await q(`GRANT SELECT ON ${live}_chunks, ${live}_meta TO reader_${n}`);
+    const url = new URL(db.connectionString);
+    url.username = `reader_${n}`;
+    url.password = "r";
+
+    const s = await PgKnowledgeStore.connect(url.toString(), live);
+    expect(await s.isPopulated()).toBe(true);
+    expect(await s.ftsSearch("memory", 5)).toEqual(["x"]);
+    expect(await s.getMeta()).toBeDefined();
+    await s.close();
+  });
+
+  it("names the missing table and ingest when serving an index that was never built", async () => {
+    await expect(PgKnowledgeStore.connect(db.connectionString, "never_built"))
+      .rejects.toThrow(/never_built_chunks.*ingest/);
+    expect(await exists("never_built_chunks")).toBe(false);
   });
 });
