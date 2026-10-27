@@ -48,7 +48,9 @@ export async function withIngestStore(
       try {
         await staging.reset();
         await fn(staging);
+        await staging.buildVectorIndex();
         // If the lock session died, another ingest may have written to the staging tables.
+        // Checked after the (possibly long) index build, right before the swap.
         await lock.assertHeld();
         await staging.swapIntoLive();
       } catch (err) {

@@ -264,18 +264,25 @@ export class PgKnowledgeStore implements KnowledgeStore {
     }
   }
 
+  /**
+   * Build the HNSW index once all vectors are in; a no-op without a vector table or when built.
+   * It can run for minutes, so an ingest calls it before re-checking its lock, not after.
+   */
+  async buildVectorIndex(): Promise<void> {
+    const vec = await this.pool.query("SELECT to_regclass($1) AS reg", [`${this.t}_vec`]);
+    if (vec.rows[0].reg === null) return;
+    await this.pool.query(
+      `CREATE INDEX IF NOT EXISTS ${this.t}_vec_idx ON ${this.t}_vec USING hnsw (embedding vector_cosine_ops)`,
+    );
+  }
+
   async swapIntoLive(): Promise<void> {
     if (!this.isStaging) {
       throw new Error("swapIntoLive can only be called on a staging store");
     }
-    // Build the vector index now that all vectors are in, and before the swap transaction:
-    // it locks the live tables, which the server keeps reading until the swap.
-    const vec = await this.pool.query("SELECT to_regclass($1) AS reg", [`${this.t}_vec`]);
-    if (vec.rows[0].reg !== null) {
-      await this.pool.query(
-        `CREATE INDEX IF NOT EXISTS ${this.t}_vec_idx ON ${this.t}_vec USING hnsw (embedding vector_cosine_ops)`,
-      );
-    }
+    // Normally built already (see buildVectorIndex); never inside the swap transaction, which
+    // locks the live tables the server keeps reading until the swap.
+    await this.buildVectorIndex();
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");

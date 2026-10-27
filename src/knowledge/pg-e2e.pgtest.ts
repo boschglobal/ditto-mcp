@@ -206,6 +206,43 @@ describe("pgvector end-to-end", () => {
     expect(await exists("lost_staging_chunks")).toBe(true);
   });
 
+  it("a lock lost while the vector index builds fails the ingest and leaves the live index untouched", async () => {
+    // The HNSW build can run for minutes; the lock must be checked after it, not before.
+    await withIngestStore(cfg("ixlost"), async (s) => {
+      await buildIndex([src], s, fake, metaFor(cfg("ixlost"), fake));
+    });
+    const replacement: KnowledgeSource = { id: "local", loadChunks: async () => [
+      chunk("local#0", "a replacement document about sharding")] };
+    // Holding ROW EXCLUSIVE on the staging vec table makes CREATE INDEX (SHARE) wait: a slow build.
+    const blocker = new pg.Client({ connectionString: db.connectionString });
+    await blocker.connect();
+    try {
+      const runA = withIngestStore(cfg("ixlost"), async (s) => {
+        await buildIndex([replacement], s, fake, metaFor(cfg("ixlost"), fake));
+        await blocker.query("BEGIN");
+        await blocker.query("LOCK TABLE ixlost_staging_vec IN ROW EXCLUSIVE MODE");
+      });
+      for (let i = 0; i < 100; i++) {
+        const [{ n }] = await q(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE 'CREATE INDEX%'",
+        );
+        if (n > 0) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const killed = await q(
+        "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND granted",
+      );
+      expect(killed).toEqual([{ pg_terminate_backend: true }]);
+      await blocker.query("COMMIT");
+      await expect(runA).rejects.toThrow(/lost the ingest lock/);
+    } finally {
+      await blocker.end();
+    }
+    const svc = await buildKnowledgeService(cfg("ixlost"), { embeddingProvider: fake });
+    const hits = await svc!.search("why does it die on reconnect", 2);
+    expect(hits[0].chunk.text.toLowerCase()).toContain("out of memory");
+  });
+
   it("lock is released when connect() throws (no leak)", async () => {
     // Regression: lock leaked when staging.connect threw, causing retry to report 'another ingest'.
     // First call: invalid prefix → connect throws → lock released.
