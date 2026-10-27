@@ -138,6 +138,21 @@ describe("parseOperations", () => {
     expect(patch.bodySchema?.props).toEqual([{ name: "attributes", type: "object", required: false }]);
   });
 
+  it("marks no field of a merge-patch body as required", () => {
+    // RFC 7386: a merge patch carries only what changes. Ditto's PatchThing still lists
+    // required: [thingId, policyId], which would push a model to send (or guess) a policyId.
+    const spec = {
+      paths: { "/things/{thingId}": { patch: { operationId: "patchThing",
+        requestBody: { content: { "application/merge-patch+json": { schema: { type: "object",
+          required: ["policyId"], properties: { policyId: { type: "string" }, attributes: { type: "object" } } } } } } } } },
+    };
+    const [patch] = parseOperations(spec);
+    expect(patch.bodySchema?.props).toEqual([
+      { name: "policyId", type: "string", required: false },
+      { name: "attributes", type: "object", required: false },
+    ]);
+  });
+
   it("resolves a $ref'd requestBody from components.requestBodies", () => {
     const spec = {
       components: { requestBodies: { PatchValue: { content: { "application/merge-patch+json": {

@@ -72,6 +72,20 @@ describe("operationToTool", () => {
     expect(bodyShape).toBeDefined();
   });
 
+  it("accepts null for a merge-patch body field, which deletes it, and only there", () => {
+    const client = new HttpDittoClient("http://fake");
+    const creds = { standard: { authHeader: async () => undefined } };
+    const props = [{ name: "definition", type: "string" as const, required: false },
+      { name: "attributes", type: "object" as const, required: false }];
+    const patch = operationToTool(op({ operationId: "patchThing", method: "PATCH", hasBody: true,
+      contentType: "application/merge-patch+json", bodySchema: { props } }), client, creds);
+    const put = operationToTool(op({ operationId: "putThing", method: "PUT", hasBody: true,
+      contentType: "application/json", bodySchema: { props } }), client, creds);
+    const deleteBoth = { definition: null, attributes: null };
+    expect(() => (patch.inputSchema.body as any).parse(deleteBoth)).not.toThrow();
+    expect(() => (put.inputSchema.body as any).parse(deleteBoth)).toThrow();
+  });
+
   it("exposes a body arg for hasBody even without bodySchema", () => {
     const client = new HttpDittoClient("http://fake");
     const config = cfg({ baseUrl: "http://fake", credential: { kind: "basic", username: "u", password: "p" } });

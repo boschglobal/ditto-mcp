@@ -14,7 +14,7 @@
 import { createHash } from "node:crypto";
 import { z, type ZodRawShape } from "zod";
 import { textResult, type ToolDef, type ToolResult, type RequestCtx } from "../core/types.js";
-import type { DittoOperation } from "./openapi.js";
+import { MERGE_PATCH, type DittoOperation } from "./openapi.js";
 import type { DittoClient } from "./client.js";
 import type { DittoCredential } from "./credential.js";
 import { isSudo } from "./tool-policy.js";
@@ -58,6 +58,8 @@ function inputSchema(op: DittoOperation): ZodRawShape {
   }
   if (op.bodySchema?.props.length) {
     const bodyShape: ZodRawShape = {};
+    // In a merge patch, null deletes the field.
+    const nullable = op.contentType === MERGE_PATCH;
     for (const bp of op.bodySchema.props) {
       const base = bp.type === "number" ? z.number()
         : bp.type === "boolean" ? z.boolean()
@@ -65,8 +67,8 @@ function inputSchema(op: DittoOperation): ZodRawShape {
         : bp.type === "array" ? z.array(z.any())
         : bp.type === "unknown" ? z.any()
         : z.string();
-      const desc = `body.${bp.name}` + (bp.required ? " (required)" : "");
-      bodyShape[bp.name] = base.optional().describe(desc);
+      const desc = `body.${bp.name}` + (bp.required ? " (required)" : "") + (nullable ? " (null deletes it)" : "");
+      bodyShape[bp.name] = (nullable ? base.nullable() : base).optional().describe(desc);
     }
     shape.body = z.object(bodyShape).passthrough().optional().describe("JSON request body");
   } else if (op.hasBody) {

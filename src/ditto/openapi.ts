@@ -72,6 +72,8 @@ function resolveSchemaRef(s: SpecShape, schema: unknown): unknown {
 
 type BodyContent = Record<string, { schema?: unknown }>;
 
+export const MERGE_PATCH = "application/merge-patch+json";
+
 // Ditto rejects a body sent with a media type the route does not accept (PATCH takes only
 // application/merge-patch+json, search POST only form-encoded), so send a declared one.
 function contentTypeOf(content: BodyContent | undefined): string | undefined {
@@ -84,7 +86,9 @@ function bodySchemaOf(s: SpecShape, content: BodyContent | undefined, contentTyp
   const schema = resolveSchemaRef(s, schemaRef) as
     | { type?: string; properties?: Record<string, unknown>; required?: string[] } | undefined;
   if (!schema || schema.type !== "object" || !schema.properties) return undefined;
-  const required = new Set(schema.required ?? []);
+  // A merge patch (RFC 7386) carries only what changes, so none of its fields is required,
+  // whatever the target resource's schema says.
+  const required = new Set(contentType === MERGE_PATCH ? [] : schema.required ?? []);
   const props: BodyProp[] = Object.entries(schema.properties).map(([name, p]) => ({
     name,
     type: bodyPropType(p), // pass the full property schema
