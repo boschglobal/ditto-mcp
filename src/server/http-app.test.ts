@@ -319,7 +319,7 @@ describe("session lifetime", () => {
     await new Promise<void>((r) => server.close(() => r()));
   });
 
-  it("at maxSessions, refuses a new initialize with 503 rather than close a recently active session", async () => {
+  it("at maxSessions, refuses a new initialize with 503 rather than close a recently active busy session", async () => {
     const { server, url } = await listen({ maxSessions: 1 });
     const { client } = await connectClient(url); // busy: holds its event stream open
     const res = await fetch(url, { method: "POST", headers: MCP_HEADERS, body: INITIALIZE });

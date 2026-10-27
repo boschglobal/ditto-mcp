@@ -117,8 +117,9 @@ export class SessionTable<T extends { close(): Promise<void> }> {
     void session.transport.close();
   }
 
-  // The least recently active idle session, else a busy one inactive for longer than the idle
-  // timeout (a stream to a vanished client may never close). A recently active one never.
+  // The least recently active idle session, however recently it was used, else a busy one
+  // inactive for longer than the idle timeout (a stream to a vanished client may never close).
+  // A busy session that was recently active is never replaced.
   private evictionCandidate(): Session<T> | undefined {
     const cutoff = this.now() - this.idleTimeoutMs;
     const byAge = [...this.sessions.values()]
