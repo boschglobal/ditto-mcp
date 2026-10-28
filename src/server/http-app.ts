@@ -112,7 +112,9 @@ export function createHttpApp(
   // Count a request against its session; the session is idle again once the response closes.
   const track = (session: Session<StreamableHTTPServerTransport>, res: Response): void => {
     sessions.begin(session);
-    res.on("close", () => sessions.end(session));
+    // A response that already closed (client gone) emits no further "close".
+    if (res.closed) sessions.end(session);
+    else res.on("close", () => sessions.end(session));
   };
 
   // Clients that crash or never send DELETE would otherwise keep their session, and its
@@ -170,7 +172,9 @@ export function createHttpApp(
           sessionIdGenerator: () => randomUUID(),
           // Runs only once the transport has accepted the initialize (Host/Origin checks passed).
           onsessioninitialized: (sid) => {
-            track(sessions.add(sid, transport as StreamableHTTPServerTransport, reservation), res);
+            const created = sessions.add(sid, transport as StreamableHTTPServerTransport, reservation);
+            if (created) track(created, res);
+            else void transport?.close(); // the client left before its session started
           },
           enableDnsRebindingProtection: http.enableDnsRebindingProtection,
           allowedHosts: http.enableDnsRebindingProtection

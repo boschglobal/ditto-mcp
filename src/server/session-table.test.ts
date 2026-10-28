@@ -33,7 +33,7 @@ function setup(maxSessions: number, idleTimeoutMs = 1000) {
     const reservation = table.reserve();
     if (!reservation) throw new Error(`no room for ${id}`);
     const transport = fakeTransport(() => table, id);
-    return { session: table.add(id, transport, reservation), transport };
+    return { session: table.add(id, transport, reservation)!, transport };
   };
   return { table, open, advance: (ms: number) => { now += ms; } };
 }
@@ -66,6 +66,17 @@ describe("SessionTable", () => {
     expect(b.transport.closed).toBe(true);
     expect(table.get("b")).toBeUndefined();
     expect(table.get("a")).toBeDefined();
+  });
+
+  it("refuses to add a session whose reservation was already released", () => {
+    // The client dropped the initialize's connection, but the SDK still started its session.
+    const { table, open } = setup(1);
+    const a = open("a");
+    const reservation = table.reserve()!; // would replace a
+    table.release(reservation);
+    expect(table.add("late", fakeTransport(() => table, "late"), reservation)).toBeUndefined();
+    expect(table.get("late")).toBeUndefined();
+    expect(a.transport.closed).toBe(false);
   });
 
   it("spares the session a released reservation would have replaced", () => {

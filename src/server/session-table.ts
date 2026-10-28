@@ -63,7 +63,13 @@ export class SessionTable<T extends { close(): Promise<void> }> {
     return { victim, settled: false };
   }
 
-  add(id: string, transport: T, reservation: Reservation<T>): Session<T> {
+  /**
+   * Add the session for a reservation, or undefined when the reservation was already released:
+   * the initialize's request ended (client gone) before the transport started the session. The
+   * caller must then close the transport; the slot may already be someone else's.
+   */
+  add(id: string, transport: T, reservation: Reservation<T>): Session<T> | undefined {
+    if (reservation.settled) return undefined;
     this.settle(reservation, true);
     const session: Session<T> = { id, transport, lastActive: this.now(), openRequests: 0 };
     this.sessions.set(id, session);
