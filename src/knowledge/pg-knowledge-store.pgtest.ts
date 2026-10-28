@@ -296,6 +296,35 @@ describe("PgKnowledgeStore", () => {
     await s.close();
   });
 
+  it("keeps a serving role's table grants across re-ingests, a first vector table included", async () => {
+    // The swap replaces the live tables; their grants must not go with them.
+    const n = Math.floor(performance.now());
+    const live = `gr_${n}`;
+    const ingest = async (withVectors: boolean, text: string) => {
+      const staging = await PgKnowledgeStore.connect(db.connectionString, live, { staging: true });
+      if (withVectors) await staging.ensureVectorTable(3);
+      await staging.addChunks([chunk("x", text)]);
+      if (withVectors) await staging.upsertVectors([{ id: "x", vector: [1, 0, 0] }]);
+      await staging.setMeta({ schemaVersion: 1, retriever: withVectors ? "hybrid" : "fts", complete: true });
+      await staging.swapIntoLive();
+      await staging.close();
+    };
+    await ingest(false, "first"); // FTS-only: no _vec to grant on yet
+    await q(`CREATE ROLE reader_${n} LOGIN PASSWORD 'r'`);
+    await q(`GRANT SELECT ON ${live}_chunks, ${live}_meta TO reader_${n}`);
+    const url = new URL(db.connectionString);
+    url.username = `reader_${n}`;
+    url.password = "r";
+
+    for (const text of ["second", "third"]) {
+      await ingest(true, text);
+      const s = await PgKnowledgeStore.connect(url.toString(), live);
+      expect((await s.getChunk("x"))?.text).toBe(text);
+      expect((await s.vectorSearch([1, 0, 0], 1))[0].id).toBe("x");
+      await s.close();
+    }
+  });
+
   it("names the missing table and ingest when serving an index that was never built", async () => {
     await expect(PgKnowledgeStore.connect(db.connectionString, "never_built"))
       .rejects.toThrow(/never_built_chunks.*ingest/);

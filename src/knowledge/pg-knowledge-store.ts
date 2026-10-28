@@ -31,6 +31,23 @@ function lastById<T extends { id: string }>(items: T[]): T[] {
   return [...new Map(items.map((it) => [it.id, it])).values()];
 }
 
+/** Re-grant on `to` what others than its owner hold on `from` (none if `from` doesn't exist). */
+async function copyGrants(client: pg.PoolClient, from: string, to: string): Promise<void> {
+  const grants = await client.query(
+    `SELECT a.privilege_type, a.is_grantable,
+            CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(r.rolname) END AS grantee
+       FROM pg_class c
+       CROSS JOIN LATERAL aclexplode(c.relacl) a
+       LEFT JOIN pg_roles r ON r.oid = a.grantee
+      WHERE c.oid = to_regclass($1) AND a.grantee <> c.relowner`,
+    [from],
+  );
+  for (const g of grants.rows) {
+    // privilege_type is a keyword (SELECT, INSERT, ...); grantee comes quoted from quote_ident.
+    await client.query(`GRANT ${g.privilege_type} ON ${to} TO ${g.grantee}${g.is_grantable ? " WITH GRANT OPTION" : ""}`);
+  }
+}
+
 export class PgKnowledgeStore implements KnowledgeStore {
   private constructor(
     private readonly pool: pg.Pool,
@@ -286,6 +303,17 @@ export class PgKnowledgeStore implements KnowledgeStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+
+      // The live tables' grants (a serving role's SELECT) would go with them: copy them onto the
+      // staging tables first. A first _vec, with no live one before it, takes _chunks' grants.
+      const regclass = async (name: string) =>
+        (await client.query("SELECT to_regclass($1) AS reg", [name])).rows[0].reg !== null;
+      await copyGrants(client, `${this.livePrefix}_chunks`, `${this.t}_chunks`);
+      await copyGrants(client, `${this.livePrefix}_meta`, `${this.t}_meta`);
+      if (await regclass(`${this.t}_vec`)) {
+        const from = (await regclass(`${this.livePrefix}_vec`)) ? `${this.livePrefix}_vec` : `${this.livePrefix}_chunks`;
+        await copyGrants(client, from, `${this.t}_vec`);
+      }
 
       // Drop existing live tables
       await client.query(`DROP TABLE IF EXISTS ${this.livePrefix}_chunks`);
