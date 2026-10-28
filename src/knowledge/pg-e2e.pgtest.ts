@@ -243,6 +243,35 @@ describe("pgvector end-to-end", () => {
     expect(hits[0].chunk.text.toLowerCase()).toContain("out of memory");
   });
 
+  it("refuses searches after a live re-ingest that no longer matches the config, until one does", async () => {
+    // A running server reads whatever the swap put live; check it like at startup.
+    const table = `live_${Math.floor(performance.now())}`;
+    const ingest = (c: ReturnType<typeof cfg>, embedder?: EmbeddingProvider) =>
+      withIngestStore(c, async (s) => { await buildIndex([src], s, embedder, metaFor(c, embedder)); });
+    await ingest(cfg(table), fake);
+    const svc = await buildKnowledgeService(cfg(table), { embeddingProvider: fake });
+    expect((await svc!.search("why does it die on reconnect", 2)).length).toBeGreaterThan(0);
+
+    // Same dim, another model: queries would be embedded with the wrong model, ranking silently off.
+    const otherModel = cfg(table);
+    otherModel.knowledge.embedding.model = "other/model";
+    await ingest(otherModel, fake);
+    await expect(svc!.search("why does it die on reconnect", 2)).rejects.toThrow(
+      /re-ingested with retriever=hybrid, model=other\/model, dim=3.*configured for retriever=hybrid, model=Xenova\/bge-small-en-v1\.5, dim=3/,
+    );
+
+    // FTS-only: no _vec table at all.
+    const ftsOnly = cfg(table);
+    ftsOnly.knowledge.retriever = "fts";
+    await ingest(ftsOnly);
+    await expect(svc!.search("why does it die on reconnect", 2)).rejects.toThrow(/re-ingested with retriever=fts,/);
+
+    // A matching ingest puts it back in service without a restart.
+    await ingest(cfg(table), fake);
+    const hits = await svc!.search("why does it die on reconnect", 2);
+    expect(hits[0].chunk.text.toLowerCase()).toContain("out of memory");
+  });
+
   it("lock is released when connect() throws (no leak)", async () => {
     // Regression: lock leaked when staging.connect threw, causing retry to report 'another ingest'.
     // First call: invalid prefix → connect throws → lock released.

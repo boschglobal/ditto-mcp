@@ -35,6 +35,40 @@ function metaMatches(meta: IndexMeta | null | undefined, config: AppConfig): boo
   return meta.embeddingModel === e.model && meta.embeddingDim === e.dim;
 }
 
+function describeMeta(meta: Pick<IndexMeta, "retriever" | "embeddingModel" | "embeddingDim">): string {
+  return `retriever=${meta.retriever}` +
+    (meta.retriever === "fts" ? "" : `, model=${meta.embeddingModel}, dim=${meta.embeddingDim}`);
+}
+
+/**
+ * An ingest swaps a new pgvector index in while the server runs, and every query reads the
+ * swapped tables. So before each search, compare the stored meta with the last one seen, and
+ * when it changed, check it against the config again, as at startup. While it doesn't match
+ * (embedded with another model or dim, or built for another retriever), searches are refused
+ * with the reason. A matching index always has the vector table its retriever needs.
+ */
+function watchIndex(store: KnowledgeStore, config: AppConfig, meta: IndexMeta | undefined): () => Promise<void> {
+  let seen = JSON.stringify(meta ?? null);
+  let mismatch: string | undefined;
+  const e = config.knowledge.embedding;
+  const expected = describeMeta({ retriever: config.knowledge.retriever, embeddingModel: e.model, embeddingDim: e.dim });
+  return async () => {
+    const current = await store.getMeta();
+    const key = JSON.stringify(current ?? null);
+    if (key !== seen) {
+      seen = key;
+      const was = mismatch;
+      mismatch = metaMatches(current, config)
+        ? undefined
+        : `the knowledge index was re-ingested with ${current ? describeMeta(current) : "no metadata"}, ` +
+          `but this server is configured for ${expected}; re-ingest with the server's config or restart it with the index's`;
+      if (mismatch) process.stderr.write(`[ditto-mcp] knowledge search disabled: ${mismatch}\n`);
+      else if (was) process.stderr.write("[ditto-mcp] knowledge search enabled: the re-ingested index matches the config\n");
+    }
+    if (mismatch) throw new Error(mismatch);
+  };
+}
+
 export async function buildKnowledgeService(
   config: AppConfig,
   deps: KnowledgeDeps = {},
@@ -53,7 +87,9 @@ export async function buildKnowledgeService(
       try {
         if (await store.isPopulated()) {
           const meta = await store.getMeta();
-          if (metaMatches(meta, config)) return new KnowledgeService(store, makeRetriever(config, store, embedder));
+          if (metaMatches(meta, config)) {
+            return new KnowledgeService(store, makeRetriever(config, store, embedder), watchIndex(store, config, meta));
+          }
         }
         // No matching prebuilt index → warn and disable knowledge (do NOT auto-build for pgvector).
         process.stderr.write(

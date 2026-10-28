@@ -41,9 +41,12 @@ export class KnowledgeService {
   constructor(
     private readonly store: KnowledgeStore,
     private readonly retriever: Retriever,
+    /** Runs before every search; throws to refuse it (e.g. a live-swapped index that no longer fits). */
+    private readonly beforeSearch?: () => Promise<void>,
   ) {}
 
   async search(query: string, k: number, opts: SearchOptions = {}): Promise<RetrievedChunk[]> {
+    await this.beforeSearch?.();
     const anchors = await this.retriever.search(query, k);
     const context = opts.context ?? 0;
     if (context <= 0 || anchors.length === 0) {
