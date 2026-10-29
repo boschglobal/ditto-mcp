@@ -2,6 +2,7 @@
 paths:
   - "src/ditto/**"
   - "openapi/**"
+  - "scripts/fetch-ditto-spec.mjs"
 ---
 
 # Ditto action tools
@@ -11,7 +12,7 @@ Security constraints for this code live in `security.md`. This file covers how i
 ## Pipeline (runs once, at startup)
 `registerTools` lazily imports `ditto/action-tools.js` and calls `makeActionTools(config, deps?)`, which:
 1. Builds the client. `ditto.baseUrl` is required; without it, it throws and startup fails.
-2. Loads the spec, first match wins: `openApi.path`, then `openApi.url`, then `openApi.version` (filled into `versionUrlTemplate`), then the bundled `openapi/ditto-api-2.yml` (`BUNDLED_SPEC_PATH`). The YAML parser also reads JSON. A failure throws `cannot build the Ditto action tools: ...`.
+2. Loads the spec, first match wins: `openApi.path`, then `openApi.url`, then `openApi.version` (filled into `versionUrlTemplate`), then the bundled `openapi/ditto-api-2.yml` (`BUNDLED_SPEC_PATH`, fetched by `npm run fetch-spec`). The YAML parser also reads JSON. A failure throws `cannot build the Ditto action tools: ...`.
 3. Creates the credentials with `createConfigCredential`: `credential` (standard) and `devopsCredential` (optional).
 4. `parseOperations(spec)` turns the spec into `DittoOperation[]` (`openapi.ts`).
 5. Keeps only operations where `isAllowed(op, policy)` holds (`tool-policy.ts`).
@@ -43,4 +44,4 @@ An allowlist entry is either an operationId or `"METHOD /raw/spec/{path}"`, with
 - `oidc` uses `OidcClientCredential`: a client_credentials grant with HTTP Basic client authentication. The token is cached until `expires_in` minus 30 s; concurrent callers share one in-flight fetch, which times out after 15 s. If tokenUrl, clientId, or clientSecret is missing, it logs a warning and sends no credential.
 
 ## Bundled spec
-`openapi/ditto-api-2.yml` is a verbatim copy of Ditto's spec. Never edit it by hand. To refresh it, follow `openapi/README.md` and update the source commit recorded there, then re-run `ditto/bundled-spec.test.ts` and check the README tool-name examples still match.
+`openapi/ditto-api-2.yml` is Ditto's spec, verbatim, and is not checked in. `openapi/ditto-spec.json` pins the Ditto git ref and the file's sha256; `scripts/fetch-ditto-spec.mjs` (`npm run fetch-spec`) downloads it and refuses any other hash. The `pretest`, `prebuild`, `predev:stdio` and `predev:http` hooks run it, and so does the Docker builder through `npm run build`. Never commit the yml or edit it by hand. To move to another Ditto release, follow `openapi/README.md`, then re-run `ditto/bundled-spec.test.ts` and check the README tool-name examples still match.

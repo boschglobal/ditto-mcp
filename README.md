@@ -21,6 +21,8 @@ npm ci
 npm run build
 ```
 
+`npm run build` first downloads Ditto's OpenAPI spec at the pinned release (see [Ditto Action Tools](#ditto-action-tools)); it needs access to raw.githubusercontent.com once.
+
 ### Run (stdio transport)
 
 The MCP server runs in stdio mode by default (for Claude Desktop, Cline, and other MCP clients):
@@ -396,7 +398,7 @@ The server can expose action tools dynamically generated from a Ditto OpenAPI sp
 | `ditto.openApi.version` | `string?` | `undefined` | Ditto git tag/ref (e.g. `3.6.0`) to fetch the matching spec for, via `versionUrlTemplate`. |
 | `ditto.openApi.versionUrlTemplate` | `string` | eclipse-ditto raw URL | URL template with a `${version}` placeholder; override for forks/mirrors. |
 
-Spec resolution precedence (first match wins): `path` > `url` > `version` > the bundled spec (`openapi/ditto-api-2.yml`, a copy of Ditto's spec — see `openapi/README.md` for its source revision), which is baked into the Docker image and works offline. Set `version` to target a different Ditto release at runtime (requires network).
+Spec resolution precedence (first match wins): `path` > `url` > `version` > the bundled spec (`openapi/ditto-api-2.yml`, Ditto's spec at the release pinned in `openapi/ditto-spec.json`), which is baked into the Docker image and works offline. The bundled spec is not checked in: `npm run fetch-spec` downloads it and verifies its sha256, and `npm test`, `npm run build`, `npm run dev:stdio`, `npm run dev:http` and the Docker build run it first. See `openapi/README.md` for offline setup and for moving the pin. Set `version` to target a different Ditto release at runtime (requires network).
 
 The action tools are built once at startup. With `ditto.enabled: true`, a spec that cannot be loaded (unreachable URL, bad file) or a missing `ditto.baseUrl` stops the server with a `fatal:` error naming the cause, instead of it running without action tools until the next restart.
 
@@ -537,7 +539,7 @@ Connections and devops endpoints are gated at the MCP layer (sudo policy) to pre
 ## Testing
 
 ```bash
-npm test              # hermetic unit tests (no Docker, no network)
+npm test              # hermetic unit tests (no Docker, no network; first fetches the pinned Ditto spec if missing)
 npm run test:pg       # Postgres integration tests (requires Docker + testcontainers)
 npm run typecheck     # TypeScript type check
 ```
@@ -567,6 +569,7 @@ All examples use placeholders (e.g., `REPLACE_ME`, `/path/to/...`) for secrets a
 - `src/server/` — `buildServer`, `createHttpApp`
 - `src/bin/` — `stdio`, `http`, `ingest` entrypoints
 - `examples/` — reference configs (parse-tested)
+- `openapi/` — pin (Ditto ref + sha256) of the bundled Ditto spec; `scripts/fetch-ditto-spec.mjs` downloads it
 
 ## Dependencies
 

@@ -39,8 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY package.json package-lock.json ./
 RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
 
-# Build TypeScript -> dist/
+# Build TypeScript -> dist/. 'npm run build' first runs fetch-spec, which puts
+# the Ditto OpenAPI spec pinned in openapi/ditto-spec.json (git ref + sha256)
+# at openapi/ditto-api-2.yml, downloading it unless the build context already
+# holds a copy with the pinned hash.
 COPY tsconfig.json ./
+COPY scripts ./scripts
+COPY openapi ./openapi
 COPY src ./src
 RUN npm run build
 
@@ -57,9 +62,10 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./package.json
 
-# Bundled Ditto OpenAPI spec: the offline fallback for action tools when
-# ditto.openApi sets none of path/url/version. Resolved as <pkg root>/openapi/.
-COPY openapi/ditto-api-2.yml ./openapi/ditto-api-2.yml
+# Bundled Ditto OpenAPI spec (fetched by the builder): the offline fallback for
+# action tools when ditto.openApi sets none of path/url/version. Resolved as
+# <pkg root>/openapi/.
+COPY --from=builder /app/openapi/ditto-api-2.yml ./openapi/ditto-api-2.yml
 
 # Baked default config (http, 0.0.0.0). Override by bind-mounting a file
 # and pointing DITTO_MCP_CONFIG at it.

@@ -20,7 +20,8 @@ There are three processes: `stdio` (local use), `http` (production, Docker), and
 | Install | `npm ci` |
 | Typecheck | `npm run typecheck` |
 | Unit tests (hermetic: no network, no Docker) | `npm test` |
-| One file / one test | `npx vitest run src/ditto/client.test.ts` / `npx vitest run -t "<test name>"` |
+| Fetch the bundled Ditto spec (`npm test`, `build`, `dev:stdio`, `dev:http` run it first) | `npm run fetch-spec` |
+| One file / one test (skips `fetch-spec`) | `npx vitest run src/ditto/client.test.ts` / `npx vitest run -t "<test name>"` |
 | Postgres tests (Docker + testcontainers) | `npm run test:pg` |
 | Build to `dist/` | `npm run build` |
 | Run from source | `DITTO_MCP_CONFIG=<file> npm run dev:stdio` (or `dev:http`, `dev:ingest`) |
@@ -84,7 +85,7 @@ bin/ingest.ts
 | `knowledge/pg-testcontainer.ts` | Test-only `startPgVector()` |
 
 Outside `src/`:
-- `openapi/ditto-api-2.yml`: a vendored copy of Ditto's spec. Never edit it by hand; see `openapi/README.md`.
+- `openapi/ditto-spec.json`: the Ditto git ref and sha256 of the bundled spec. `scripts/fetch-ditto-spec.mjs` (`npm run fetch-spec`) downloads it to `openapi/ditto-api-2.yml`, which is gitignored; never commit or hand-edit that file. See `openapi/README.md`.
 - `examples/*.json`: reference configs, parse-tested by `src/config/examples.test.ts`.
 - `docker/config.docker.json`: the config baked into the image. It is parse-tested, and a test asserts it keeps bearer auth.
 - `Dockerfile`, `.github/workflows/build.yml`.
@@ -106,6 +107,7 @@ Outside `src/`:
 | Which operations are exposed / count as sudo | `ditto/tool-policy.ts` | `.claude/rules/security.md` |
 | How requests to Ditto are built | `ditto/client.ts` | |
 | OpenAPI parsing | `ditto/openapi.ts` | |
+| Bundled Ditto spec version | `openapi/ditto-spec.json` | Steps in `openapi/README.md` |
 | Ditto authentication | `ditto/credential.ts` | |
 | HTTP routes, auth, status codes | `server/http-app.ts` | |
 | Session cap, idle timeout, eviction | `server/session-table.ts` | |
@@ -132,6 +134,6 @@ Outside `src/`:
 | `testing.md` | tests, fakes, vitest configs | Test suites, hermetic test patterns, fakes |
 | `security.md` | `src/server`, `src/ditto`, `src/config`, `src/bin`, Docker | Credential model, HTTP auth, policy, path guard, SQL identifiers |
 | `http-server.md` | `src/server`, `src/bin` | Transports, request flow, SessionTable invariants |
-| `ditto-actions.md` | `src/ditto`, `openapi/` | The OpenAPI-to-tool pipeline, naming, client, credentials |
+| `ditto-actions.md` | `src/ditto`, `openapi/`, `scripts/fetch-ditto-spec.mjs` | The OpenAPI-to-tool pipeline, naming, client, credentials |
 | `knowledge.md` | `src/knowledge`, `tools/knowledge.ts`, `bin/ingest.ts` | Abstractions, chunk ids, index meta, server startup, ingest, stores |
 | `config-and-docs.md` | `src/config`, `examples`, `docker`, `README.md`, `Dockerfile`, `package.json` | Config change checklist, Docker, dependencies |

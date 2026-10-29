@@ -30,9 +30,10 @@ export interface ActionToolDeps {
   client?: DittoClient;
 }
 
-// Ditto OpenAPI spec vendored at openapi/ditto-api-2.yml (see openapi/README.md). Resolves
-// from both src (tsx) and dist (tsc): dirname is src/ditto or dist/ditto -> two levels up =
-// the package root, which is /app in the Docker image.
+// Ditto OpenAPI spec that `npm run fetch-spec` puts at openapi/ditto-api-2.yml, pinned by
+// openapi/ditto-spec.json (see openapi/README.md). Resolves from both src (tsx) and dist (tsc):
+// dirname is src/ditto or dist/ditto -> two levels up = the package root, which is /app in the
+// Docker image.
 export const BUNDLED_SPEC_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
   "..", "..",

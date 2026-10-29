@@ -12,12 +12,18 @@
     "ditto-mcp-ingest": "dist/bin/ingest.js"
   },
   "scripts": {
+    "fetch-spec": "node scripts/fetch-ditto-spec.mjs",
+    "prebuild": "npm run fetch-spec",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm run fetch-spec",
     "test": "vitest run",
+    "pretest:watch": "npm run fetch-spec",
     "test:watch": "vitest",
     "test:pg": "vitest run --config vitest.pg.config.ts",
+    "predev:stdio": "npm run fetch-spec",
     "dev:stdio": "tsx src/bin/stdio.ts",
+    "predev:http": "npm run fetch-spec",
     "dev:http": "tsx src/bin/http.ts",
     "dev:ingest": "tsx src/bin/ingest.ts"
   },

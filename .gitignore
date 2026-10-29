@@ -12,6 +12,9 @@ dist/
 /models/
 .cache/
 
+# Ditto OpenAPI spec, downloaded by `npm run fetch-spec` as pinned in openapi/ditto-spec.json
+/openapi/ditto-api-2.yml
+
 # Local config with secrets
 config.local.json
 config.*.local.json

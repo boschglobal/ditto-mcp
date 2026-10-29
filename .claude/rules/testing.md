@@ -16,7 +16,7 @@ The framework is vitest 2 with `globals: false`: import `describe`, `it`, `expec
 
 | Suffix | Run by | Needs |
 |---|---|---|
-| `*.test.ts` | `npm test` (20 s timeout) | Nothing. Hermetic: no network, no Docker |
+| `*.test.ts` | `npm test` (20 s timeout) | Nothing. Hermetic: no network, no Docker. (`npm test` first runs `fetch-spec`, which downloads the pinned Ditto spec only if `openapi/ditto-api-2.yml` is missing or stale; `npx vitest run` skips that step.) |
 | `*.itest.ts` | `npm test`, but skipped unless an env var is set | e.g. `RUN_EMBED_ITEST=1` downloads the real bge model |
 | `*.pgtest.ts` | `npm run test:pg` (`vitest.pg.config.ts`, 120 s timeouts) | Docker. `startPgVector()` from `knowledge/pg-testcontainer.ts` starts `pgvector/pgvector:pg16` |
 
@@ -40,5 +40,5 @@ To run a single file: `npx vitest run <file>`. For a pg file, add `--config vite
 - When a regression test's scenario isn't obvious, say in a comment which failure it guards against.
 - Postgres tests share one container per file. Each test creates its own table prefix (`t_${...}`) and connects with `{ staging: true }` when it needs a writable store, since only staging stores run DDL.
 - `config/examples.test.ts` parses every `examples/*.json`, so a new example is picked up automatically. It also parses `docker/config.docker.json` and asserts it keeps bearer auth.
-- `ditto/bundled-spec.test.ts` pins facts about the vendored spec: there is a things GET; connections count as sudo; every PATCH is sent as merge-patch; tool names are distinct and at most 64 chars. After a spec refresh, check those assumptions still hold.
+- `ditto/bundled-spec.test.ts` pins facts about the bundled spec (pinned in `openapi/ditto-spec.json`): there is a things GET; connections count as sudo; every PATCH is sent as merge-patch; tool names are distinct and at most 64 chars. After moving the pin, check those assumptions still hold.
 - Test helpers that aren't `*.test.ts` (`fake-*.ts`, `pg-testcontainer.ts`) are compiled into `dist/` by `tsc`. Never import them from runtime code.
