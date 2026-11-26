@@ -77,6 +77,11 @@ function bearerAuthMiddleware(auth: HttpAuthConfig) {
 /** The Express app, plus a way to end every MCP session at shutdown. */
 export type HttpApp = Express & { closeSessions(): Promise<void> };
 
+export interface HttpAppDeps {
+  /** The sessions' clock, for idle timeouts and eviction. */
+  now?: () => number;
+}
+
 /**
  * `registry` is built once at startup and shared by every session: rebuilding it per session
  * re-read (or re-fetched) the OpenAPI spec and gave each session fresh credentials with empty
@@ -85,6 +90,7 @@ export type HttpApp = Express & { closeSessions(): Promise<void> };
 export function createHttpApp(
   config: AppConfig,
   registry: ToolRegistry,
+  deps: HttpAppDeps = {},
 ): HttpApp {
   // Fail closed: an unauthenticated endpoint on a routable interface hands every caller the
   // server's Ditto identity — including `devopsCredential`, which reaches /devops and the
@@ -114,6 +120,7 @@ export function createHttpApp(
     maxSessions,
     sessionIdleTimeoutMs,
     sessionEvictionMinIdleMs,
+    deps.now,
   );
 
   // Count a request against its session; the session is idle again once the response closes.

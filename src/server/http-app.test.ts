@@ -26,14 +26,17 @@ import { registerTools } from "../tools/index.js";
 import { ToolRegistry } from "../registry/tool-registry.js";
 import { startFakeOidc } from "../ditto/fake-oidc.js";
 
-async function listen(http: Record<string, unknown> = {}): Promise<{ server: Server; url: string }> {
+async function listen(
+  http: Record<string, unknown> = {},
+  opts: { now?: () => number } = {},
+): Promise<{ server: Server; url: string }> {
   // protocol e2e; DNS-rebinding protection exercised separately below.
   // knowledge disabled to keep this transport test hermetic; knowledge covered in knowledge tests.
   const config = AppConfigSchema.parse({
     server: { http: { enableDnsRebindingProtection: false, ...http } },
     knowledge: { enabled: false },
   });
-  const app = createHttpApp(config, await registerTools(config));
+  const app = createHttpApp(config, await registerTools(config), { now: opts.now });
   return await new Promise((res) => {
     const server = app.listen(0, () => {
       const addr = server.address();
@@ -246,6 +249,25 @@ async function connectClient(url: string): Promise<{ client: Client; sessionId: 
   return { client, sessionId: transport.sessionId! };
 }
 
+/** Open a session's GET event stream; resolves once the server answered, so the stream counts as open. */
+function openEventStream(url: string, sessionId: string): Promise<{ status: number; close: () => void }> {
+  const { port } = new URL(url);
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        hostname: "127.0.0.1", port, path: "/mcp", method: "GET",
+        headers: { Accept: "text/event-stream", "mcp-session-id": sessionId },
+      },
+      (res) => {
+        res.resume();
+        resolve({ status: res.statusCode ?? 0, close: () => req.destroy() });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 /** POST with an explicit Host header, which fetch cannot set. */
 function postWithHost(
   url: string, host: string, body: string, sessionId?: string,
@@ -274,24 +296,32 @@ function postWithHost(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Session activity runs on an injected clock in the tests that depend on the idle timeout. On
+// real time, with a 50 ms timeout (and so a sweep every 50 ms), a loaded runner that stalled
+// past the timeout between two of the test's own requests had a session swept before the test
+// used it: "closes a busy session ..." failed now and then with the fresh session at 404.
 describe("session lifetime", () => {
   it("closes a session idle longer than sessionIdleTimeoutMs", async () => {
     // Clients that crash or never send DELETE would otherwise hold their session forever.
-    const { server, url } = await listen({ sessionIdleTimeoutMs: 50 });
+    let clock = 0;
+    const { server, url } = await listen({ sessionIdleTimeoutMs: 50 }, { now: () => clock });
     const sid = await initSession(url);
     expect(await pingStatus(url, sid)).toBe(200);
-    await sleep(250);
+    clock += 51;
+    await sleep(250); // the sweep runs every 50 ms of real time
     expect(await pingStatus(url, sid)).toBe(404);
     await new Promise<void>((r) => server.close(() => r()));
   });
 
   it("keeps an idle-timed session alive while its client holds an event stream open", async () => {
-    const { server, url } = await listen({ sessionIdleTimeoutMs: 50 });
-    const { client } = await connectClient(url);
-    await sleep(250);
-    const res = await client.callTool({ name: "ping", arguments: {} });
-    expect((res.content as Array<{ text: string }>)[0].text).toBe("pong");
-    await client.close();
+    let clock = 0;
+    const { server, url } = await listen({ sessionIdleTimeoutMs: 50 }, { now: () => clock });
+    const sid = await initSession(url);
+    const stream = await openEventStream(url, sid);
+    clock += 1_000;
+    await sleep(250); // several sweeps, each long past the idle timeout
+    expect(await pingStatus(url, sid)).toBe(200);
+    stream.close();
     await new Promise<void>((r) => server.close(() => r()));
   });
 
@@ -321,13 +351,16 @@ describe("session lifetime", () => {
 
   it("at maxSessions, closes a busy session inactive longer than the idle timeout", async () => {
     // A stream to a vanished client may never close; it must not hold its slot forever.
-    const { server, url } = await listen({ maxSessions: 1, sessionIdleTimeoutMs: 50 });
-    const { client, sessionId: busy } = await connectClient(url); // holds its event stream open
-    await sleep(150);
+    // A 60 s timeout keeps the sweep (every 60 s) out of the way of the fresh session.
+    let clock = 0;
+    const { server, url } = await listen({ maxSessions: 1, sessionIdleTimeoutMs: 60_000 }, { now: () => clock });
+    const busy = await initSession(url);
+    const stream = await openEventStream(url, busy);
+    clock += 60_001;
     const fresh = await initSession(url);
     expect(await pingStatus(url, busy)).toBe(404);
     expect(await pingStatus(url, fresh)).toBe(200);
-    await client.close();
+    stream.close();
     await new Promise<void>((r) => server.close(() => r()));
   });
 
