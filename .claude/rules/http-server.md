@@ -16,6 +16,7 @@ paths:
 
 ## HTTP request flow (`http-app.ts`)
 1. If `auth.mode` is `"bearer"`, the bearer middleware runs on `/mcp` before `express.json()`.
+   The drain middleware comes next: it counts the POSTs in flight and, once `drain()` was called, answers everything but DELETE with 503 / `-32000` and `Connection: close`.
 2. A POST with a known `mcp-session-id` goes to that session's transport.
 3. A POST with an unknown session id gets **404**, which the MCP spec reserves for "re-initialize". Not 400.
 4. A POST without a session id that isn't an `initialize` gets 400.
@@ -39,5 +40,5 @@ paths:
 ## Entrypoints
 - Each one has the same shape: `async function main()`, then `main().catch(err => { stderr "...fatal: ..."; process.exit(1) })`.
 - Config comes only from the `DITTO_MCP_CONFIG` env var.
-- `bin/http.ts` handles `SIGTERM`/`SIGINT` (`process.once`): `server.close()`, then `app.closeSessions()` (event streams never end on their own and would hold `close()` open), then `closeIdleConnections()`; a 5 s unref'ed backstop exits with 1. Keep it: in the container node is PID 1, which gets no default signal action, so without the handler `docker stop` waits for SIGKILL. `bin/ingest.ts` handles the same signals by aborting the build (see `knowledge.md`).
+- `bin/http.ts` handles `SIGTERM`/`SIGINT` (`process.once`): `server.close()`, then `app.drain(4 s)`, then `app.closeSessions()` (event streams never end on their own and would hold `close()` open), then `closeIdleConnections()`; a 5 s unref'ed backstop exits with 1. Drain before closing: the SDK's `transport.close()` ends the response stream of a tool call still running and aborts its handler, so a Ditto write could succeed with the response lost. `drain` waits only for POSTs, never for GET event streams, which don't end on their own. Keep it: in the container node is PID 1, which gets no default signal action, so without the handler `docker stop` waits for SIGKILL. `bin/ingest.ts` handles the same signals by aborting the build (see `knowledge.md`).
 - `bin/*.ts` start with `#!/usr/bin/env node`. `package.json` `bin` maps `ditto-mcp-{stdio,http,ingest}` to `dist/bin/*.js`.

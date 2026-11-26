@@ -74,8 +74,17 @@ function bearerAuthMiddleware(auth: HttpAuthConfig) {
   };
 }
 
-/** The Express app, plus a way to end every MCP session at shutdown. */
-export type HttpApp = Express & { closeSessions(): Promise<void> };
+/** The Express app, plus the two steps of a shutdown. */
+export type HttpApp = Express & {
+  /**
+   * Refuse new requests (503) and wait up to `timeoutMs` for the POSTs in flight to finish.
+   * Resolves with how many are still open. Event streams are not waited for: they never end on
+   * their own, and close with the sessions.
+   */
+  drain(timeoutMs: number): Promise<number>;
+  /** End every MCP session, which also cuts off any request still in flight. */
+  closeSessions(): Promise<void>;
+};
 
 export interface HttpAppDeps {
   /** The sessions' clock, for idle timeouts and eviction. */
@@ -112,6 +121,46 @@ export function createHttpApp(
   if (config.server.http.auth.mode === "bearer") {
     app.use("/mcp", bearerAuthMiddleware(config.server.http.auth));
   }
+
+  // Shutdown lets the POSTs in flight finish before the sessions close (`drain`): closing a
+  // session ends the response stream of a tool call that is still running, so a Ditto write in
+  // progress during a rollout could succeed without the client ever getting the response.
+  // Meanwhile new requests are refused, except DELETE, which only ends a session.
+  let draining = false;
+  let inFlight = 0;
+  let onDrained: (() => void) | undefined;
+  let drained: Promise<number> | undefined;
+  app.use("/mcp", (req: Request, res: Response, next: NextFunction) => {
+    if (draining && req.method !== "DELETE") {
+      res.setHeader("connection", "close");
+      res.status(503).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Server shutting down" },
+        id: null,
+      });
+      return;
+    }
+    if (req.method === "POST") {
+      inFlight++;
+      res.on("close", () => {
+        if (--inFlight === 0) onDrained?.();
+      });
+    }
+    next();
+  });
+  const drain = (timeoutMs: number): Promise<number> => {
+    draining = true;
+    drained ??= inFlight === 0
+      ? Promise.resolve(0)
+      : new Promise<number>((resolve) => {
+        const timer = setTimeout(() => resolve(inFlight), timeoutMs);
+        onDrained = () => {
+          clearTimeout(timer);
+          resolve(0);
+        };
+      });
+    return drained;
+  };
 
   app.use(express.json({ limit: config.server.http.maxRequestBytes }));
 
@@ -280,5 +329,5 @@ export function createHttpApp(
     reply(500, -32603, "Internal error");
   });
 
-  return Object.assign(app, { closeSessions: () => sessions.closeAll() });
+  return Object.assign(app, { drain, closeSessions: () => sessions.closeAll() });
 }

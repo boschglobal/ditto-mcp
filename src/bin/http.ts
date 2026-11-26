@@ -19,6 +19,8 @@ import { registerTools } from "../tools/index.js";
 
 /** Backstop for a request that does not end; below Docker's default 10 s stop timeout. */
 const SHUTDOWN_DEADLINE_MS = 5_000;
+/** How long requests in flight get to finish; leaves a second of the deadline to close the rest. */
+const DRAIN_MS = 4_000;
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env.DITTO_MCP_CONFIG);
@@ -35,11 +37,20 @@ async function main(): Promise<void> {
   // to PID 1: without these handlers, `docker stop` or a Kubernetes pod termination waits out
   // the grace period and then SIGKILLs the server. Outside a container, a second Ctrl-C kills at once.
   const shutdown = (signal: NodeJS.Signals): void => {
-    process.stderr.write(`[ditto-mcp] ${signal} received; closing sessions and shutting down\n`);
+    process.stderr.write(`[ditto-mcp] ${signal} received; finishing open requests and shutting down\n`);
     server.close(() => process.exit(0));
-    // Event streams never end on their own and would hold close() open. Once the sessions are
-    // closed, drop the keep-alive connections left idle.
-    void app.closeSessions().then(() => server.closeIdleConnections());
+    // Tool calls in flight finish first: closing a session ends their response streams, so a
+    // Ditto write could succeed with its response lost. Then close the sessions, since event
+    // streams never end on their own and would hold close() open, and drop the keep-alive
+    // connections left idle.
+    void app.drain(DRAIN_MS)
+      .then((open) => {
+        if (open > 0) {
+          process.stderr.write(`[ditto-mcp] ${open} request(s) still open after ${DRAIN_MS} ms; closing them\n`);
+        }
+        return app.closeSessions();
+      })
+      .then(() => server.closeIdleConnections());
     setTimeout(() => {
       process.stderr.write(`[ditto-mcp] requests still open after ${SHUTDOWN_DEADLINE_MS} ms; exiting\n`);
       process.exit(1);

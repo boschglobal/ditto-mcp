@@ -21,27 +21,28 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { AppConfigSchema } from "../config/schema.js";
 import { startFakeDitto } from "../ditto/fake-ditto.js";
-import { createHttpApp } from "./http-app.js";
+import { createHttpApp, type HttpApp } from "./http-app.js";
+import { textResult } from "../core/types.js";
 import { registerTools } from "../tools/index.js";
 import { ToolRegistry } from "../registry/tool-registry.js";
 import { startFakeOidc } from "../ditto/fake-oidc.js";
 
 async function listen(
   http: Record<string, unknown> = {},
-  opts: { now?: () => number } = {},
-): Promise<{ server: Server; url: string }> {
+  opts: { registry?: ToolRegistry; now?: () => number } = {},
+): Promise<{ server: Server; url: string; app: HttpApp }> {
   // protocol e2e; DNS-rebinding protection exercised separately below.
   // knowledge disabled to keep this transport test hermetic; knowledge covered in knowledge tests.
   const config = AppConfigSchema.parse({
     server: { http: { enableDnsRebindingProtection: false, ...http } },
     knowledge: { enabled: false },
   });
-  const app = createHttpApp(config, await registerTools(config), { now: opts.now });
+  const app = createHttpApp(config, opts.registry ?? await registerTools(config), { now: opts.now });
   return await new Promise((res) => {
     const server = app.listen(0, () => {
       const addr = server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;
-      res({ server, url: `http://127.0.0.1:${port}/mcp` });
+      res({ server, url: `http://127.0.0.1:${port}/mcp`, app });
     });
   });
 }
@@ -383,6 +384,80 @@ describe("session lifetime", () => {
     const { sessionId } = await postWithHost(url, "127.0.0.1:3000", INITIALIZE);
     expect((await postWithHost(url, "attacker.example", INITIALIZE)).status).toBe(403);
     expect((await postWithHost(url, "127.0.0.1:3000", ping, sessionId)).status).toBe(200);
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+});
+
+describe("shutdown drain", () => {
+  /** A registry with one tool that runs until the test lets it finish. */
+  function gatedTool(): { registry: ToolRegistry; entered: Promise<void>; release: () => void } {
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((r) => (enter = r));
+    const gate = new Promise<void>((r) => (release = r));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "slow",
+      description: "finishes when the test says so",
+      inputSchema: {},
+      handler: async () => {
+        enter();
+        await gate;
+        return textResult("done");
+      },
+    });
+    return { registry, entered, release };
+  }
+
+  it("lets a tool call in flight finish, refusing new requests meanwhile", async () => {
+    // Closing the sessions at once ended the response stream of a running tool call: a Ditto
+    // write in progress during a rollout could succeed without the client getting the response.
+    const { registry, entered, release } = gatedTool();
+    const { app, server, url } = await listen({}, { registry });
+    const { client } = await connectClient(url);
+    const call = client.callTool({ name: "slow", arguments: {} });
+    await entered;
+
+    const drained = app.drain(5_000);
+    const refused = await fetch(url, { method: "POST", headers: MCP_HEADERS, body: INITIALIZE });
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -32000 } });
+
+    release();
+    expect(await drained).toBe(0);
+    expect(((await call).content as Array<{ text: string }>)[0].text).toBe("done");
+    await app.closeSessions();
+    await client.close();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("stops waiting after its timeout and reports how many requests are still open", async () => {
+    const { registry, entered, release } = gatedTool();
+    const { app, server, url } = await listen({}, { registry });
+    const { client } = await connectClient(url);
+    const call = client.callTool({ name: "slow", arguments: {} });
+    await entered;
+
+    const started = Date.now();
+    expect(await app.drain(100)).toBe(1);
+    expect(Date.now() - started).toBeLessThan(2_000);
+
+    release();
+    await call;
+    await app.closeSessions();
+    await client.close();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("resolves at once when nothing is in flight, while a client holds its event stream open", async () => {
+    // An event stream never ends on its own; it is closed with the sessions, not waited for.
+    const { app, server, url } = await listen();
+    const { client } = await connectClient(url);
+    const started = Date.now();
+    expect(await app.drain(5_000)).toBe(0);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    await app.closeSessions();
+    await client.close();
     await new Promise<void>((r) => server.close(() => r()));
   });
 });
